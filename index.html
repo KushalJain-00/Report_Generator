@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RIG — Report Intelligence Generator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:ital,wght@0,300;0,400;0,500;1,300&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://unpkg.com/html-docx-js/dist/html-docx.js"></script>
+<link rel="stylesheet" href="assets/css/index.css">
+</head>
+<body>
+<nav class="topbar">
+  <a class="logo" href="auth.html"><span class="logo-badge">RIG</span><span class="logo-text">Report Intelligence</span></a>
+  <div class="step-pills">
+    <span class="sp active" id="sp1">01 Details</span>
+    <span style="color:var(--wire);font-size:9px">›</span>
+    <span class="sp" id="sp2">02 Documents</span>
+    <span style="color:var(--wire);font-size:9px">›</span>
+    <span class="sp" id="sp3">03 Generate</span>
+    <span style="color:var(--wire);font-size:9px">›</span>
+    <span class="sp" id="sp4">04 Download</span>
+  </div>
+  <div class="topbar-right">
+    <button class="tbtn" id="btn-brand-open" onclick="openBrand()">
+      <span class="tdot" id="brand-dot"></span>
+      <span id="brand-lbl">Branding</span>
+    </button>
+    <button class="tbtn" id="btn-api-open" onclick="openApi()">
+      <span class="tdot" id="api-dot"></span>
+      <span id="api-lbl">API Key</span>
+    </button>
+  </div>
+</nav>
+
+<div class="page">
+  <div class="hero">
+    <div class="hero-tag">✦ AI-Powered Document Engine</div>
+    <h1>Generate a complete<br><em>Report Package</em> in minutes</h1>
+    <p class="hero-sub">Enter your service name, pick from 36 professional documents, brand with your logo — download a complete ZIP ready to send to clients.</p>
+    <div class="hero-stats">
+      <div class="hero-stat"><strong>36</strong>Doc Types</div>
+      <div class="hero-stat"><strong>6</strong>Categories</div>
+      <div class="hero-stat"><strong>4</strong>AI Providers</div>
+      <div class="hero-stat"><strong>🏢</strong>Branded ZIP</div>
+    </div>
+  </div>
+
+  <!-- VIEW 1: DETAILS -->
+  <div class="view active" id="view-form">
+    <div class="card">
+      <div class="card-title">Service / Project Details</div>
+      <div class="fg">
+        <div class="field fc">
+          <label>Service / Report Name *</label>
+          <input type="text" id="f-name" placeholder="e.g. Water Audit, Energy Audit, ESG Report, FSSAI Compliance Audit...">
+        </div>
+        <div class="field"><label>Sector / Industry</label><input type="text" id="f-sector" placeholder="e.g. Water & Sanitation, Pharma, Food & Bev"></div>
+        <div class="field"><label>Geography / Location</label><input type="text" id="f-geo" placeholder="e.g. Surat, Gujarat, India"></div>
+        <div class="field"><label>Client / Organisation</label><input type="text" id="f-client" placeholder="e.g. Surat Municipal Corporation"></div>
+        <div class="field"><label>Target Audience</label><input type="text" id="f-audience" placeholder="e.g. Municipal Engineers, VC Investors, Board"></div>
+        <div class="field fc"><label>Brief Description / Objective</label><textarea id="f-desc" placeholder="Describe what this service does, its goal, and why it matters..."></textarea></div>
+        <div class="field"><label>Standards / Regulations</label><input type="text" id="f-standards" placeholder="e.g. BIS 10500, WHO, FSSAI, ISO 14001"></div>
+        <div class="field"><label>Pricing / Budget Estimate</label><input type="text" id="f-price" placeholder="e.g. ₹2,50,000 or USD 5,000"></div>
+        <div class="field"><label>Project Duration</label><input type="text" id="f-duration" placeholder="e.g. 8 weeks, 3 months"></div>
+        <div class="field"><label>Output Language</label>
+          <select id="f-lang"><option>English</option><option>Hindi</option><option>Gujarati</option><option>Spanish</option><option>French</option><option>Arabic</option><option>Portuguese</option></select>
+        </div>
+      </div>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-lime btn-full" id="btn-to-docs">
+        Continue — Select Documents
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- VIEW 2: DOCS -->
+  <div class="view" id="view-docs">
+    <div class="card">
+      <div class="card-title">Choose Documents</div>
+      <div class="filter-bar">
+        <span class="fchip active" onclick="filterDocs(this,'all')">All 36</span>
+        <span class="fchip" onclick="filterDocs(this,'overview')">📖 Overview</span>
+        <span class="fchip" onclick="filterDocs(this,'planning')">📋 Planning</span>
+        <span class="fchip" onclick="filterDocs(this,'operations')">⚙️ Operations</span>
+        <span class="fchip" onclick="filterDocs(this,'data')">📊 Data &amp; Field</span>
+        <span class="fchip" onclick="filterDocs(this,'business')">💼 Business</span>
+        <span class="fchip" onclick="filterDocs(this,'marketing')">📣 Marketing</span>
+        <div class="sel-wrap">
+          <button class="sel-btn" onclick="selAll(true)">Select All</button>
+          <button class="sel-btn" onclick="selAll(false)">Deselect All</button>
+          <span class="sel-count" id="sel-count">36 selected</span>
+        </div>
+      </div>
+      <div class="doc-grid" id="doc-grid"></div>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-ghost" onclick="goTo(1)">← Back</button>
+      <button class="btn btn-lime" style="flex:1;justify-content:center" onclick="startGen()">
+        Generate Package
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- VIEW 3: GENERATING -->
+  <div class="view" id="view-gen">
+    <div style="text-align:center;padding:22px 0 28px">
+      <h2 style="font-family:'Syne',sans-serif;font-weight:800;font-size:26px;color:var(--white);margin-bottom:6px">Generating Your Package</h2>
+      <p style="font-size:12px;color:var(--dim)">AI is writing each document — please keep this tab open</p>
+    </div>
+    <div class="prog-card">
+      <div class="prog-head"><span class="prog-lbl" id="prog-lbl">Initializing...</span><span class="prog-pct" id="prog-pct">0%</span></div>
+      <div class="prog-bg"><div class="prog-fill" id="prog-fill" style="width:0%"></div></div>
+      <div class="prog-cur" id="prog-cur">Setting up generation pipeline...</div>
+    </div>
+    <div class="stats-row">
+      <div class="stat-box"><div class="stat-num" id="cnt-done">0</div><div class="stat-lbl">Complete</div></div>
+      <div class="stat-box"><div class="stat-num warn" id="cnt-gen">0</div><div class="stat-lbl">In Progress</div></div>
+      <div class="stat-box"><div class="stat-num dim" id="cnt-left">—</div><div class="stat-lbl">Remaining</div></div>
+    </div>
+    <div class="gen-grid" id="gen-grid"></div>
+  </div>
+
+  <!-- VIEW 4: RESULTS -->
+  <div class="view" id="view-done">
+    <div class="results-head">
+      <div>
+        <h2>Package Ready ✦</h2>
+        <p style="font-size:11px;color:var(--dim);margin-top:4px">Click any document to preview • Download all as ZIP</p>
+      </div>
+      <div class="dl-actions">
+        <button class="btn btn-ghost" onclick="restart()">New Package</button>
+        <button class="btn btn-cyan" onclick="downloadZip()" id="btn-zip">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Download ZIP
+        </button>
+      </div>
+    </div>
+    <div class="stats-row">
+      <div class="stat-box"><div class="stat-num" id="r-docs">0</div><div class="stat-lbl">Documents</div></div>
+      <div class="stat-box"><div class="stat-num" id="r-words">—</div><div class="stat-lbl">Est. Words</div></div>
+      <div class="stat-box"><div class="stat-num" id="r-time">—</div><div class="stat-lbl">Gen Time</div></div>
+    </div>
+    <div class="final-grid" id="final-grid"></div>
+    <div class="preview-panel">
+      <div class="pv-head"><span class="pv-title" id="pv-title">Select a document to preview</span><button class="btn-copy" onclick="copyPv()">Copy</button></div>
+      <div class="pv-content" id="pv-content"><div class="pv-placeholder">← Click any document card above to preview its content</div></div>
+    </div>
+    <div id="zip-status" style="font-size:11px;color:var(--dim);text-align:center;margin-top:6px"></div>
+  </div>
+</div>
+
+<!-- API MODAL -->
+<div class="overlay" id="api-overlay" onclick="handleOv(event,'api-overlay',closeApi)">
+  <div class="modal modal-api">
+    <div class="modal-head">
+      <div><h3>Configure AI Provider</h3><p>Key stored only in your browser — never sent to our servers.</p></div>
+      <button class="modal-x" onclick="closeApi()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="ptabs" id="ptabs">
+        <span class="ptab active" data-p="anthropic" onclick="switchProv(this,'anthropic')">Anthropic (Claude)</span>
+        <span class="ptab" data-p="openai" onclick="switchProv(this,'openai')">OpenAI (GPT)</span>
+        <span class="ptab" data-p="gemini" onclick="switchProv(this,'gemini')">Google (Gemini)</span>
+        <span class="ptab" data-p="openrouter" onclick="switchProv(this,'openrouter')">OpenRouter</span>
+        <span class="ptab" data-p="groq" onclick="switchProv(this,'groq')">Groq</span>
+      </div>
+      <div id="api-status-box"></div>
+      <div class="api-wrap">
+        <input type="password" id="api-key-inp" placeholder="Paste your API key..." oninput="document.getElementById('api-status-box').innerHTML=''">
+        <button class="eye" onclick="toggleEye()" id="eye-btn">👁</button>
+      </div>
+      <div class="model-row"><label>Model</label><select id="model-sel"></select></div>
+      <div class="api-note" id="api-note"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeApi()" style="flex:1;justify-content:center">Cancel</button>
+      <button class="btn btn-lime" onclick="saveApi()" style="flex:2;justify-content:center">Save &amp; Connect</button>
+    </div>
+  </div>
+</div>
+
+<!-- BRAND MODAL -->
+<div class="overlay" id="brand-overlay" onclick="handleOv(event,'brand-overlay',closeBrand)">
+  <div class="modal modal-brand">
+    <div class="modal-head">
+      <div><h3>Company Branding</h3><p>All generated documents will include your branding and appear as proprietary company documents.</p></div>
+      <button class="modal-x" onclick="closeBrand()">✕</button>
+    </div>
+    <div class="modal-body">
+      <!-- Logo -->
+      <div class="sect-label">Company Logo</div>
+      <label class="brand-logo-upload" id="logo-upload-label">
+        <input type="file" accept="image/*" onchange="handleLogo(this)">
+        <div class="logo-placeholder">🏢</div>
+        <div style="font-size:12px;color:var(--snow);font-weight:500;margin-bottom:3px" id="logo-upload-text">Click to upload logo</div>
+        <div style="font-size:11px;color:var(--dim)">PNG, JPG, SVG — appears on all documents</div>
+        <img id="logo-img-prev" class="logo-img-preview" alt="Logo">
+      </label>
+
+      <!-- Company Info -->
+      <div class="sect-label">Company Information</div>
+      <div class="brand-fg">
+        <div class="field"><label>Company Name</label><input type="text" id="b-cname" placeholder="e.g. AquaTech Solutions Pvt. Ltd."></div>
+        <div class="field"><label>Company Email</label><input type="email" id="b-email" placeholder="e.g. info@aquatech.in"></div>
+        <div class="field"><label>Phone / WhatsApp</label><input type="text" id="b-phone" placeholder="e.g. +91 98765 43210"></div>
+        <div class="field"><label>Website</label><input type="text" id="b-web" placeholder="e.g. www.aquatech.in"></div>
+        <div class="field" style="grid-column:1/-1"><label>Address / Tagline</label><input type="text" id="b-addr" placeholder="e.g. Surat, Gujarat | Pioneering Water Intelligence"></div>
+      </div>
+
+      <!-- Watermark -->
+      <div class="sect-label">Document Watermark</div>
+      <div class="wm-row">
+        <input type="checkbox" id="wm-enable" onchange="document.getElementById('wm-type').disabled=!this.checked">
+        <label for="wm-enable" style="cursor:pointer">Add watermark to all documents</label>
+        <select id="wm-type" disabled>
+          <option>CONFIDENTIAL</option>
+          <option>PROPRIETARY</option>
+          <option>DRAFT</option>
+          <option>INTERNAL USE ONLY</option>
+          <option>DO NOT DISTRIBUTE</option>
+        </select>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeBrand()" style="flex:1;justify-content:center">Cancel</button>
+      <button class="btn btn-cyan" onclick="saveBrand()" style="flex:2;justify-content:center">Save Branding</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"><span class="t-icon" id="t-icon">✓</span><span id="t-msg"></span></div>
+
+<script src="assets/js/index.js"></script>
+</body>
+</html>
