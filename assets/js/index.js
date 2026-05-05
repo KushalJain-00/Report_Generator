@@ -48,7 +48,7 @@ const DOCS=[
 
 // ── STATE ─────────────────────────────────────────────────────────
 const S={
-  project:{},selected:new Set(DOCS.map(d=>d.id)),generated:{},filter:'all',view:1,startTime:null,
+  project:{},selected:new Set(DOCS.map(d=>d.id)),generated:{},filter:'all',view:1,startTime:null,referenceText:'',
   api:{provider:'anthropic',key:'',model:''},
   brand:{cname:'',email:'',phone:'',web:'',addr:'',logoDataUrl:'',watermark:false,watermarkText:'CONFIDENTIAL'},
 };
@@ -60,7 +60,12 @@ const PROV={
   groq:{name:'Groq',models:['llama-3.3-70b-versatile','llama-3.1-8b-instant','mixtral-8x7b-32768','gemma2-9b-it'],ph:'gsk_...',note:'Get key at <a href="https://console.groq.com/keys" target="_blank">console.groq.com</a>'},
 };
 
-// ── NAV ───────────────────────────────────────────────────────────
+// ── NAV & THEME ───────────────────────────────────────────────────
+function toggleTheme(){
+  const isLight = document.body.classList.toggle('light-theme');
+  document.getElementById('theme-icon').textContent = isLight ? '🌙' : '☀️';
+  try{localStorage.setItem('rig_theme', isLight ? 'light' : 'dark');}catch(e){}
+}
 function goTo(n){
   ['view-form','view-docs','view-gen','view-done'].forEach((id,i)=>document.getElementById(id).classList.toggle('active',i===n-1));
   ['sp1','sp2','sp3','sp4'].forEach((id,i)=>{const el=document.getElementById(id);el.classList.remove('active','done');if(i+1===n)el.classList.add('active');else if(i+1<n)el.classList.add('done');});
@@ -68,12 +73,25 @@ function goTo(n){
 }
 
 // ── VIEW 1 ────────────────────────────────────────────────────────
+document.getElementById('f-reference')?.addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) { S.referenceText = ''; document.getElementById('ref-status').textContent = ''; return; }
+  document.getElementById('ref-status').textContent = 'Reading...';
+  try {
+    const text = await file.text();
+    S.referenceText = text;
+    document.getElementById('ref-status').textContent = `Loaded (${Math.round(text.length/1024)}kb)`;
+  } catch(err) {
+    document.getElementById('ref-status').textContent = 'Error reading file';
+    S.referenceText = '';
+  }
+});
 document.getElementById('btn-to-docs').onclick=()=>{
   const name=document.getElementById('f-name').value.trim();
   if(!name){document.getElementById('f-name').classList.add('err');showToast('Please enter a service / report name','err');return;}
   document.getElementById('f-name').classList.remove('err');
   if(!S.api.key){showToast('Please configure your API key first','err');openApi();return;}
-  S.project={name,sector:document.getElementById('f-sector').value,geo:document.getElementById('f-geo').value,client:document.getElementById('f-client').value,audience:document.getElementById('f-audience').value,desc:document.getElementById('f-desc').value,standards:document.getElementById('f-standards').value,price:document.getElementById('f-price').value,duration:document.getElementById('f-duration').value,lang:document.getElementById('f-lang').value};
+  S.project={name,sector:document.getElementById('f-sector').value,geo:document.getElementById('f-geo').value,client:document.getElementById('f-client').value,audience:document.getElementById('f-audience').value,desc:document.getElementById('f-desc').value,standards:document.getElementById('f-standards').value,price:document.getElementById('f-price').value,duration:document.getElementById('f-duration').value,lang:document.getElementById('f-lang').value, referenceText: S.referenceText};
   renderDocGrid();goTo(2);
 };
 
@@ -105,7 +123,12 @@ async function startGen(){
     document.getElementById('cnt-gen').textContent=1;
     document.getElementById('cnt-left').textContent=toGen.length-i-1;
     try{
-      S.generated[doc.id]=await callAI(doc);done++;
+      S.generated[doc.id]=await callAI(doc, 1, (chunk) => {
+        document.getElementById('live-stream-content').innerHTML = marked.parse(chunk) + '<span class="cursor" style="opacity:0.5">|</span>';
+        const lb = document.querySelector('.live-stream-box');
+        if(lb) lb.scrollTop = lb.scrollHeight;
+      });
+      done++;
       card?.classList.remove('generating');card?.classList.add('done');
       if(stat){stat.className='gc-status s-done';stat.textContent='done';}
     }catch(e){
@@ -126,43 +149,67 @@ async function startGen(){
 }
 
 // ── AI CALL ───────────────────────────────────────────────────────
-async function callAI(doc, attempt=1){
+async function callAI(doc, attempt=1, onChunk=null){
   const {provider:p,key,model}=S.api;
   const prompt=buildPrompt(doc,S.project,S.brand);
   try{
+    let url, headers, body;
     if(p==='anthropic'){
-      const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model,max_tokens:1500,messages:[{role:'user',content:prompt}]})});
-      if(r.status===429 && attempt<3) throw new Error('RETRY_429');
-      if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.error?.message||`HTTP ${r.status}`);}
-      const d=await r.json();return d.content.map(c=>c.text||'').join('');
-    }
-    if(p==='openai'||p==='openrouter'||p==='groq'){
-      const ep=p==='openai'?'https://api.openai.com/v1/chat/completions':(p==='openrouter'?'https://openrouter.ai/api/v1/chat/completions':'https://api.groq.com/openai/v1/chat/completions');
-      const headers={'Content-Type':'application/json','Authorization':`Bearer ${key}`};
+      url='https://api.anthropic.com/v1/messages';
+      headers={'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'};
+      body=JSON.stringify({model,max_tokens:4096,messages:[{role:'user',content:prompt}],stream:true});
+    }else if(['openai','openrouter','groq'].includes(p)){
+      url=p==='openai'?'https://api.openai.com/v1/chat/completions':(p==='openrouter'?'https://openrouter.ai/api/v1/chat/completions':'https://api.groq.com/openai/v1/chat/completions');
+      headers={'Content-Type':'application/json','Authorization':`Bearer ${key}`};
       if(p==='openrouter') headers['HTTP-Referer']='https://rig-app.com';
-      const r=await fetch(ep,{method:'POST',headers,body:JSON.stringify({model,max_tokens:1500,messages:[{role:'user',content:prompt}]})});
-      if(r.status===429 && attempt<3) throw new Error('RETRY_429');
-      if(!r.ok){
-        const e=await r.json().catch(()=>({}));
-        let msg=e.error?.message||`HTTP ${r.status}`;
-        if(e.error?.metadata?.raw) msg+=`\nDetails: ${JSON.stringify(e.error.metadata.raw)}`;
-        throw new Error(msg);
+      body=JSON.stringify({model,max_tokens:4096,messages:[{role:'user',content:prompt}],stream:true});
+    }else if(p==='gemini'){
+      url=`https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${key}`;
+      headers={'Content-Type':'application/json'};
+      body=JSON.stringify({contents:[{parts:[{text:prompt}]}],generationConfig:{maxOutputTokens:4096}});
+    }else throw new Error('Unknown provider');
+
+    const r=await fetch(url,{method:'POST',headers,body});
+    if(r.status===429 && attempt<3) throw new Error('RETRY_429');
+    if(!r.ok){
+      const e=await r.json().catch(()=>({}));
+      let msg=e.error?.message||`HTTP ${r.status}`;
+      if(e.error?.metadata?.raw) msg+=`\nDetails: ${JSON.stringify(e.error.metadata.raw)}`;
+      throw new Error(msg);
+    }
+    
+    const reader = r.body.getReader();
+    const decoder = new TextDecoder();
+    let content = '';
+    while(true){
+      const {done, value} = await reader.read();
+      if(done) break;
+      const chunk = decoder.decode(value, {stream: true});
+      const lines = chunk.split('\n');
+      for(const line of lines){
+        const tline = line.trim();
+        if(tline.startsWith('data: ') && tline !== 'data: [DONE]'){
+          try{
+            const data = JSON.parse(tline.slice(6));
+            let textDelta = '';
+            if(p==='anthropic' && data.type==='content_block_delta') textDelta = data.delta?.text||'';
+            else if(['openai','openrouter','groq'].includes(p)) textDelta = data.choices?.[0]?.delta?.content||'';
+            else if(p==='gemini') textDelta = data.candidates?.[0]?.content?.parts?.[0]?.text||'';
+            if(textDelta){
+              content += textDelta;
+              if(onChunk) onChunk(content);
+            }
+          }catch(e){}
+        }
       }
-      const d=await r.json();return d.choices?.[0]?.message?.content||'';
     }
-    if(p==='gemini'){
-      const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:prompt}]}],generationConfig:{maxOutputTokens:1500}})});
-      if(r.status===429 && attempt<3) throw new Error('RETRY_429');
-      if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.error?.message||`HTTP ${r.status}`);}
-      const d=await r.json();return d.candidates?.[0]?.content?.parts?.map(p=>p.text||'').join('')||'';
-    }
-    throw new Error('Unknown provider');
+    return content;
   } catch(err) {
     if(err.message==='RETRY_429' && attempt<3){
       document.getElementById('prog-cur').textContent=`Rate limited (429). Retrying in 10s... (Attempt ${attempt}/3)`;
       await new Promise(r=>setTimeout(r, 10000));
       document.getElementById('prog-cur').textContent=doc.tip;
-      return callAI(doc, attempt+1);
+      return callAI(doc, attempt+1, onChunk);
     }
     throw err;
   }
@@ -170,54 +217,81 @@ async function callAI(doc, attempt=1){
 
 // ── PROMPTS ───────────────────────────────────────────────────────
 function buildPrompt(doc,p,b){
-  const ctx=`SERVICE: "${p.name}"\nSector: ${p.sector||'N/A'} | Location: ${p.geo||'N/A'} | Client: ${p.client||'N/A'}\nAudience: ${p.audience||'N/A'} | Duration: ${p.duration||'N/A'} | Budget: ${p.price||'N/A'}\nStandards: ${p.standards||'N/A'} | Language: ${p.lang}\nDescription: ${p.desc||'N/A'}\n${b.cname?`Company: ${b.cname} | Email: ${b.email||''} | Phone: ${b.phone||''} | Web: ${b.web||''}\n`:''}${b.watermark?`[WATERMARK: ${b.watermarkText}]\n`:''}`;
+  const systemPersona = `You are an elite, top-tier management consultant, project manager, and domain expert specializing in producing high-quality, professional-grade enterprise documentation. You deliver actionable, precise, and highly detailed reports with zero fluff. You use business-appropriate language, adhere strictly to requested structures, and provide rich, realistic, and contextually accurate insights based on the provided parameters.`;
+
+  const ctx = `--- PROJECT & CONTEXT PARAMETERS ---
+Service/Project Name: ${p.name}
+Industry/Sector: ${p.sector||'Not Specified'}
+Geographical Scope: ${p.geo||'Not Specified'}
+Target Client/Organization: ${p.client||'Not Specified'}
+Target Audience/Stakeholders: ${p.audience||'Not Specified'}
+Estimated Duration: ${p.duration||'Not Specified'}
+Estimated Budget/Value: ${p.price||'Not Specified'}
+Relevant Standards/Compliances: ${p.standards||'Not Specified'}
+Project Description: ${p.desc||'Not Specified'}
+${p.referenceText ? `\n--- STYLE & CONTENT REFERENCE ---\nThe following is a reference document provided by the user. Align the tone, formatting, and structural approach with this reference, while addressing the core project context above:\n\n${p.referenceText}\n` : ''}
+--- BRANDING & AUTHORSHIP ---
+${b.cname?`Consulting Firm/Company: ${b.cname}\nContact Email: ${b.email||'Not Specified'}\nContact Phone: ${b.phone||'Not Specified'}\nWebsite: ${b.web||'Not Specified'}`:'Authorship: Independent Consulting Professional'}
+${b.watermark?`CONFIDENTIALITY NOTE: This document is classified as [${b.watermarkText}].`:''}`;
+
+  const outputDirectives = `--- OUTPUT DIRECTIVES ---
+1. Language: Strictly write in ${p.lang}.
+2. Formatting: Use extremely well-structured Markdown. Use clear, hierarchical headings (H1, H2, H3), bullet points, and bold text for emphasis.
+3. Tables: Use proper Markdown tables extensively (with | Column | Column | syntax). NEVER use code-blocks, ASCII art, or plain text for tables. Always ensure tables have a clear header row and data rows. The layout must be ready to render beautifully into a Word document.
+4. Professionalism: Maintain a formal, authoritative, and consultative tone. Avoid generic AI introductory or concluding remarks. Start immediately with the document content.
+5. Detail Level: Maximize depth. Do not use placeholders like "[Insert Date]". Instead, generate highly realistic, hypothetical data, timelines, or scenarios that perfectly match the project context if exact data is missing.
+${b.cname?`6. Ownership: Subtly position the document as the intellectual property and expert deliverable of ${b.cname}.`:'6. Ownership: Present this as a professional proprietary document.'}`;
+
   const pm={
-    overview:`Generate a "Brief Overview of the Service" document. Structure: (1) What is "${p.name}"? (2) Why is it important/mandatory? (3) Who needs it? (4) High-level process involved. (5) Key outcomes and benefits. (6) Summary table of key facts. Make it clear and compelling — suitable for a client brochure.\n\n${ctx}`,
-    applicability:`Generate "Applicability of the Service" document. Include: (1) Industries/sectors applicable (table), (2) Organisation types and sizes, (3) Geographic/regulatory applicability, (4) When it is legally or operationally mandatory, (5) Decision-maker profiles who benefit. Use clear tables.\n\n${ctx}`,
-    proscons:`Generate "Pro's and Con's of the Service". PROS section (minimum 10 with explanation), CONS section (minimum 6 with mitigation strategies), Overall Recommendation, 5 common client objections with answers. Help clients make informed decisions.\n\n${ctx}`,
-    tableofcontent:`Generate a master "Table of Contents" for a complete report package. Number all sections. Parts: I — Project Initiation, II — Planning, III — Data Collection & Analysis, IV — Findings & Recommendations, V — Annexures. Include sub-sections with estimated page counts.\n\n${ctx}`,
-    casestudy:`Generate a detailed "Case Study". Structure: (1) Client Profile (realistic fictional), (2) Problem Statement, (3) Approach & Methodology, (4) Implementation Timeline, (5) Key Findings, (6) Solutions Recommended, (7) Outcomes & Impact (with numbers), (8) Client Testimonial, (9) Lessons Learned.\n\n${ctx}`,
-    dashboard:`Generate a "Dashboard Template" structure. Include: (1) KPI Cards (8-10 metrics with units), (2) Status Overview section, (3) Progress Tracker, (4) Financial Summary, (5) Timeline/Milestone view, (6) Risk/Issue log summary, (7) Next Actions. Describe each widget for Excel/software implementation.\n\n${ctx}`,
-    charter:`Generate a professional "Project Charter". Include: Project Title, Date, Sponsor, PM, Objectives (5 SMART), Scope Summary, Budget Estimate, Key Milestones (6), Stakeholders, Risks, Authority Granted, Approval signatures table.\n\n${ctx}`,
-    sow:`Generate a detailed "Scope of Work (SOW)". Include: Introduction, In-Scope (numbered), Out-of-Scope (numbered), Deliverables table (name, description, due date, format), Performance Standards, Payment Milestones, Termination Clauses, Signatures.\n\n${ctx}`,
-    wbs:`Generate a "Work Breakdown Structure". Table: WBS ID | Task Name | Phase | Duration (days) | Dependencies | Responsible | Status. Include 5+ phases and 25+ tasks. Add phase summary.\n\n${ctx}`,
-    gantt:`Generate a text-format "Gantt Chart". Table: Task | Phase | Start Wk | End Wk | Duration | then 16-week grid using █ (active) · (inactive). 20+ tasks across: Planning, Mobilisation, Field/Data, Analysis, Reporting.\n\n${ctx}`,
-    resource:`Generate a "Resource Allocation Plan". Include: Org chart (text), Role table (Role | Qualification | Responsibility | Days | Rate | Total Cost), Individual Scope of Work per role, Equipment list, Budget Summary.\n\n${ctx}`,
-    assumption:`Generate "Assumption & Constraint Log". TABLE 1 Assumptions (ID | Assumption | Basis | Impact if Wrong | Probability | Owner | Date) — 12 entries. TABLE 2 Constraints (ID | Constraint | Type | Impact | Mitigation | Owner) — 10 entries.\n\n${ctx}`,
-    risk:`Generate a "Risk Register". Table: Risk ID | Category | Description | Cause | Probability H/M/L | Impact H/M/L | Score | Mitigation | Contingency | Owner | Review Date | Status. Minimum 18 risks across Technical, Financial, Operational, Environmental, Regulatory.\n\n${ctx}`,
-    sop:`Generate a comprehensive "SOP for Preparation of ${p.name}". Include: Purpose, Scope, Definitions table, Roles & Responsibilities, Detailed Numbered Steps (with sub-steps, decision points), Quality Checks at each stage, Non-Conformance handling, Documentation requirements, Review cycle, Revision History.\n\n${ctx}`,
-    methodology:`Generate a "Methodology of Work" document. Include: Overview/Philosophy, Research Design, Data Collection Methods (primary & secondary), Tools & Equipment, Analytical Framework, QA/QC, Limitations, Ethical Considerations.\n\n${ctx}`,
-    tor:`Generate "Terms of Reference (ToR)". Include: Background, Objectives, Scope, Tasks (detailed numbered), Deliverables with timelines, Reporting Requirements, Team Qualifications, Duration & Budget, Evaluation Criteria.\n\n${ctx}`,
-    stakeholder:`Generate a "Stakeholder Register". Table: Stakeholder | Organisation | Role | Interest H/M/L | Influence H/M/L | Engagement Strategy | Communication Preference | Key Concerns | Expectations | Status. Minimum 15 stakeholders.\n\n${ctx}`,
-    comms:`Generate a "Communication Plan". Include: Communication Matrix table (Audience | Info | Method | Frequency | Responsible | Format | Distribution), Meeting Schedule, Reporting Calendar, Escalation Matrix.\n\n${ctx}`,
-    flow:`Generate a "Process Flow Diagram" in text/ASCII format for delivering "${p.name}" end-to-end. Include: Phase table, ASCII flowchart, RACI matrix (Activity | PM | Field | Analyst | Client | QA), Quality Checkpoints per phase.\n\n${ctx}`,
-    gap:`Generate a "Gap Analysis Template". Include: Current State Assessment, Desired State, Gap Analysis Matrix (Area | Sub-area | Current | Required | Gap | Severity H/M/L | Priority | Action | Timeline | Responsible), Implementation Roadmap.\n\n${ctx}`,
-    compliance:`Generate a "Compliance Check" document. Table: Requirement | Regulatory Reference | Compliance Status | Evidence Required | Current Evidence | Gap | Corrective Action | Deadline | Responsible. Add Non-Compliance Summary.\n\n${ctx}`,
-    toolsequip:`Generate "Tools & Equipment Required" list. Sections: (1) Field Instruments, (2) Safety Equipment, (3) Sampling Equipment, (4) Lab Equipment, (5) IT/Computing. Table: Item | Specification | Purpose | Quantity | Source (Own/Hire/Buy) | Estimated Cost.\n\n${ctx}`,
-    softwares:`Generate "Softwares & Digital Tools Required". Sections: (1) Data Collection, (2) Analysis & Modelling, (3) Reporting & Visualisation, (4) Project Management, (5) Communication. Table: Software | Version/Tier | Purpose | Cost/License | Free Alternative.\n\n${ctx}`,
-    peoplerequired:`Generate "People & Expertise Required". Include: (1) Team Structure diagram (text), (2) Role table (Role | No. of Persons | Min Qualification | Experience | Key Skills | Certifications), (3) Individual Scope of Work per role, (4) Hiring vs. subcontracting recommendation.\n\n${ctx}`,
-    dosdonts:`Generate "Do's & Don'ts / Things to Take Care" for "${p.name}". Categories: Project Planning, Data Collection, Stakeholder Engagement, Analysis, Report Writing, QA, Ethics, Client Communication, Team Management. Each: 8 Do's + 8 Don'ts with explanations.\n\n${ctx}`,
-    checklist:`Generate "Data & Documents Required Checklist". Sections: Primary Data, Secondary Data, Legal & Regulatory, Technical Docs, Financial Records, Stakeholder Contacts. Format: [ ] Item | Source | Format | Responsible | Due Date | Status. Minimum 50 items.\n\n${ctx}`,
-    datacollection:`Generate 3 "Data Collection Templates". FORM 1: Primary Survey (18+ questions). FORM 2: Field Measurement Log (Parameter | Unit | Method | Instrument | Reading 1-3 | Average | Standard | Status | Remarks). FORM 3: Photographic Evidence Log.\n\n${ctx}`,
-    tracker:`Generate "Document Submission Tracker". Pre-fill 25 rows: Doc ID | Name | Category | Version | Required By | Submitted Date | By | Reviewed By | Review Date | Status | Remarks. Add status dashboard section.\n\n${ctx}`,
-    sitevisit:`Generate "Site Visit / Field Observation Form". Include: Site Info, Visit Details, Safety Observations, Parameters table (Parameter | Location | Observation | Reading | Standard | Compliance | Remarks), Issues Found, Photos Required, Recommendations, Signatures.\n\n${ctx}`,
-    interview:`Generate "Interview & Questionnaire Templates". PART 1: Interview Guide (25 open-ended questions by theme). PART 2: Structured Questionnaire (20 questions with Likert 1-5 scales). PART 3: Focus Group Discussion Guide with facilitation notes.\n\n${ctx}`,
-    secondary:`Generate "Secondary Data Review Sheet". Include: Data Sources table (Source | Type | Year | Publisher | Relevance | Key Data | Gaps | Reliability H/M/L), Detailed Findings, Data Triangulation Analysis, Quality Assessment.\n\n${ctx}`,
-    sample:`Generate a "Sample Format" document. Include: Title Page template, Document Control table, all section headings with content descriptions, Figure/Table list, Abbreviations, References format, Formatting Guidelines.\n\n${ctx}`,
-    draft:`Generate a comprehensive "Draft Report". Sections: (1) Title Page, (2) Executive Summary (300 words), (3) TOC, (4) Introduction (250 words), (5) Objectives, (6) Methodology, (7) Key Findings & Analysis (500+ words with subsections), (8) Discussion, (9) Conclusions, (10) Recommendations (10 prioritised), (11) Way Forward, (12) References, (13) Annexures.\n\n${ctx}`,
-    pricing:`Generate "Pricing Calculation Reference Format" for ${p.name}. Include: Cost Components table (Labour, Equipment, Travel, Overheads, Profit, Taxes), Day Rate Calculator by role, Pricing tiers (Small/Medium/Large project), Optional add-ons, Sample Quotation layout, Pricing Assumptions.\n\n${ctx}`,
-    techquote:`Generate a "Techno-Commercial Quotation Format". Include: Company header, Client info, Quotation No./Date, Technical Scope table (Item | Description | Specification | Qty | Unit | Rate | Amount), Terms & Conditions, Payment Schedule, Validity, Signature block.\n\n${ctx}`,
-    bizplan:`Generate a "Complete Business Plan" for providing ${p.name} as a service. Include: Executive Summary, Company Overview, Vision/Mission/Values, Market Analysis (SWOT, TAM/SAM/SOM, competition), Services Portfolio, Marketing & Sales Strategy, Operations Plan, Team Structure, Financial Projections (3-year P&L, break-even), Risk Analysis, Growth Roadmap.\n\n${ctx}`,
-    excel:`Generate "Multi-Project Excel Tracker" structure for ${p.name}. (1) Dashboard layout — KPI cards: Total Projects, On Track, At Risk, Delayed, Budget Utilisation, Revenue. (2) Project Registry (20 columns): Project ID | Client | Name | Status | Priority | Start | End | % Complete | Contract Value | PO Details | Invoice No. | Payment Status | Amount Received | Balance | PM | Location | RAG | Next Milestone | Issues | Notes. (3) Key Excel formulas and conditional formatting rules to implement.\n\n${ctx}`,
-    pitch:`Generate a "Client Pitch" document for ${p.name}. Cover: WHY (problem, why now), WHAT (what we offer), HOW (methodology, approach), WHEN (timeline, phases), WHO (our team, credentials), HOW MUCH (pricing, ROI), NEXT STEPS (CTA). Make it compelling for ${p.client||'the client'}.\n\n${ctx}`,
-    pitchdeck:`Generate a "VC / Investor Pitch Deck" for the business of ${p.name} services. 12 slides: 1-Cover, 2-Problem, 3-Solution, 4-Market Opportunity (TAM/SAM/SOM), 5-Business Model, 6-Traction/Credibility, 7-Methodology/Tech, 8-Team, 9-Competitive Landscape, 10-Financials & Projections, 11-The Ask/Use of Funds, 12-CTA/Contact. Each slide: Key Message + 5 bullets + Visual suggestion + Speaker Notes.\n\n${ctx}`,
-    clientpresentation:`Generate a "Client Presentation" for ${p.name} for ${p.client||'the client'}. 12-15 slides: 1-Title, 2-Agenda, 3-About Us, 4-Your Challenge, 5-Our Solution, 6-Scope & Deliverables, 7-Methodology, 8-Team & Credentials, 9-Project Timeline, 10-Investment, 11-Case Study, 12-Next Steps, 13-Q&A/Contact. Include talking points and visual suggestions per slide.\n\n${ctx}`,
-    marketing:`Generate a "Marketing & Sales Plan" for ${p.name} services. Include: ICP (Ideal Client Profile) analysis, Value Proposition canvas, Marketing Channels (digital + offline), Sales Funnel with conversion activities, 3-month Content Calendar, Pricing Strategy, KPIs & metrics, Monthly budget template.\n\n${ctx}`,
-    emailmarketing:`Generate "Email Marketing Content" for ${p.name}. Create: (1) Cold Outreach Sequence (5 emails — intro, value, case study, urgency, breakup), (2) Follow-up Sequence (3 emails), (3) Newsletter Template, (4) Proposal Follow-up, (5) Onboarding Welcome. Each: Subject line (3 options), Body, CTA.\n\n${ctx}`,
-    whatsapp:`Generate "WhatsApp Marketing Content" for ${p.name}. Create: (1) Cold Outreach Messages (5 variants), (2) Follow-up Messages (3 variants), (3) Broadcast Announcement Template, (4) Festival/Occasion Greeting with service mention, (5) Reference Request, (6) Quote Follow-up, (7) Testimonial Request. Keep messages concise and mobile-friendly.\n\n${ctx}`,
-    pharmasample:`Generate "Sample Copy of ${p.name} — Pharma Industry" version. Adapt all content specifically for pharmaceutical companies: use pharma terminology, regulatory references (WHO-GMP, Schedule M, FDA 21 CFR, ICH guidelines), pharma-specific parameters, stakeholders. Show how this service applies in a pharma manufacturing context.\n\n${ctx}`,
+    overview:`Generate a "Brief Overview of the Service" document. Structure: (1) What is "${p.name}"? (2) Why is it important/mandatory? (3) Who needs it? (4) High-level process involved. (5) Key outcomes and benefits. (6) Summary table of key facts. Make it clear and compelling — suitable for a client brochure.`,
+    applicability:`Generate "Applicability of the Service" document. Include: (1) Industries/sectors applicable (table), (2) Organisation types and sizes, (3) Geographic/regulatory applicability, (4) When it is legally or operationally mandatory, (5) Decision-maker profiles who benefit. Use clear tables.`,
+    proscons:`Generate "Pro's and Con's of the Service". PROS section (minimum 10 with explanation), CONS section (minimum 6 with mitigation strategies), Overall Recommendation, 5 common client objections with answers. Help clients make informed decisions.`,
+    tableofcontent:`Generate a master "Table of Contents" for a complete report package. Number all sections. Parts: I — Project Initiation, II — Planning, III — Data Collection & Analysis, IV — Findings & Recommendations, V — Annexures. Include sub-sections with estimated page counts.`,
+    casestudy:`Generate a detailed "Case Study". Structure: (1) Client Profile (realistic fictional), (2) Problem Statement, (3) Approach & Methodology, (4) Implementation Timeline, (5) Key Findings, (6) Solutions Recommended, (7) Outcomes & Impact (with numbers), (8) Client Testimonial, (9) Lessons Learned.`,
+    dashboard:`Generate a "Dashboard Template" structure. Include: (1) KPI Cards (8-10 metrics with units), (2) Status Overview section, (3) Progress Tracker, (4) Financial Summary, (5) Timeline/Milestone view, (6) Risk/Issue log summary, (7) Next Actions. Describe each widget for Excel/software implementation.`,
+    charter:`Generate a professional "Project Charter". Include: Project Title, Date, Sponsor, PM, Objectives (5 SMART), Scope Summary, Budget Estimate, Key Milestones (6), Stakeholders, Risks, Authority Granted, Approval signatures table.`,
+    sow:`Generate a detailed "Scope of Work (SOW)". Include: Introduction, In-Scope (numbered), Out-of-Scope (numbered), Deliverables table (name, description, due date, format), Performance Standards, Payment Milestones, Termination Clauses, Signatures.`,
+    wbs:`Generate a "Work Breakdown Structure". Table: WBS ID | Task Name | Phase | Duration (days) | Dependencies | Responsible | Status. Include 5+ phases and 25+ tasks. Add phase summary.`,
+    gantt:`Generate a text-format "Gantt Chart". Table: Task | Phase | Start Wk | End Wk | Duration | then 16-week grid using █ (active) · (inactive). 20+ tasks across: Planning, Mobilisation, Field/Data, Analysis, Reporting.`,
+    resource:`Generate a "Resource Allocation Plan". Include: Org chart (text), Role table (Role | Qualification | Responsibility | Days | Rate | Total Cost), Individual Scope of Work per role, Equipment list, Budget Summary.`,
+    assumption:`Generate "Assumption & Constraint Log". TABLE 1 Assumptions (ID | Assumption | Basis | Impact if Wrong | Probability | Owner | Date) — 12 entries. TABLE 2 Constraints (ID | Constraint | Type | Impact | Mitigation | Owner) — 10 entries.`,
+    risk:`Generate a "Risk Register". Table: Risk ID | Category | Description | Cause | Probability H/M/L | Impact H/M/L | Score | Mitigation | Contingency | Owner | Review Date | Status. Minimum 18 risks across Technical, Financial, Operational, Environmental, Regulatory.`,
+    sop:`Generate a comprehensive "SOP for Preparation of ${p.name}". Include: Purpose, Scope, Definitions table, Roles & Responsibilities, Detailed Numbered Steps (with sub-steps, decision points), Quality Checks at each stage, Non-Conformance handling, Documentation requirements, Review cycle, Revision History.`,
+    methodology:`Generate a "Methodology of Work" document. Include: Overview/Philosophy, Research Design, Data Collection Methods (primary & secondary), Tools & Equipment, Analytical Framework, QA/QC, Limitations, Ethical Considerations.`,
+    tor:`Generate "Terms of Reference (ToR)". Include: Background, Objectives, Scope, Tasks (detailed numbered), Deliverables with timelines, Reporting Requirements, Team Qualifications, Duration & Budget, Evaluation Criteria.`,
+    stakeholder:`Generate a "Stakeholder Register". Table: Stakeholder | Organisation | Role | Interest H/M/L | Influence H/M/L | Engagement Strategy | Communication Preference | Key Concerns | Expectations | Status. Minimum 15 stakeholders.`,
+    comms:`Generate a "Communication Plan". Include: Communication Matrix table (Audience | Info | Method | Frequency | Responsible | Format | Distribution), Meeting Schedule, Reporting Calendar, Escalation Matrix.`,
+    flow:`Generate a "Process Flow Diagram" in text/ASCII format for delivering "${p.name}" end-to-end. Include: Phase table, ASCII flowchart, RACI matrix (Activity | PM | Field | Analyst | Client | QA), Quality Checkpoints per phase.`,
+    gap:`Generate a "Gap Analysis Template". Include: Current State Assessment, Desired State, Gap Analysis Matrix (Area | Sub-area | Current | Required | Gap | Severity H/M/L | Priority | Action | Timeline | Responsible), Implementation Roadmap.`,
+    compliance:`Generate a "Compliance Check" document. Table: Requirement | Regulatory Reference | Compliance Status | Evidence Required | Current Evidence | Gap | Corrective Action | Deadline | Responsible. Add Non-Compliance Summary.`,
+    toolsequip:`Generate "Tools & Equipment Required" list. Sections: (1) Field Instruments, (2) Safety Equipment, (3) Sampling Equipment, (4) Lab Equipment, (5) IT/Computing. Table: Item | Specification | Purpose | Quantity | Source (Own/Hire/Buy) | Estimated Cost.`,
+    softwares:`Generate "Softwares & Digital Tools Required". Sections: (1) Data Collection, (2) Analysis & Modelling, (3) Reporting & Visualisation, (4) Project Management, (5) Communication. Table: Software | Version/Tier | Purpose | Cost/License | Free Alternative.`,
+    peoplerequired:`Generate "People & Expertise Required". Include: (1) Team Structure diagram (text), (2) Role table (Role | No. of Persons | Min Qualification | Experience | Key Skills | Certifications), (3) Individual Scope of Work per role, (4) Hiring vs. subcontracting recommendation.`,
+    dosdonts:`Generate "Do's & Don'ts / Things to Take Care" for "${p.name}". Categories: Project Planning, Data Collection, Stakeholder Engagement, Analysis, Report Writing, QA, Ethics, Client Communication, Team Management. Each: 8 Do's + 8 Don'ts with explanations.`,
+    checklist:`Generate "Data & Documents Required Checklist". Sections: Primary Data, Secondary Data, Legal & Regulatory, Technical Docs, Financial Records, Stakeholder Contacts. Format: [ ] Item | Source | Format | Responsible | Due Date | Status. Minimum 50 items.`,
+    datacollection:`Generate 3 "Data Collection Templates". FORM 1: Primary Survey (18+ questions). FORM 2: Field Measurement Log (Parameter | Unit | Method | Instrument | Reading 1-3 | Average | Standard | Status | Remarks). FORM 3: Photographic Evidence Log.`,
+    tracker:`Generate "Document Submission Tracker". Pre-fill 25 rows: Doc ID | Name | Category | Version | Required By | Submitted Date | By | Reviewed By | Review Date | Status | Remarks. Add status dashboard section.`,
+    sitevisit:`Generate "Site Visit / Field Observation Form". Include: Site Info, Visit Details, Safety Observations, Parameters table (Parameter | Location | Observation | Reading | Standard | Compliance | Remarks), Issues Found, Photos Required, Recommendations, Signatures.`,
+    interview:`Generate "Interview & Questionnaire Templates". PART 1: Interview Guide (25 open-ended questions by theme). PART 2: Structured Questionnaire (20 questions with Likert 1-5 scales). PART 3: Focus Group Discussion Guide with facilitation notes.`,
+    secondary:`Generate "Secondary Data Review Sheet". Include: Data Sources table (Source | Type | Year | Publisher | Relevance | Key Data | Gaps | Reliability H/M/L), Detailed Findings, Data Triangulation Analysis, Quality Assessment.`,
+    sample:`Generate a "Sample Format" document. Include: Title Page template, Document Control table, all section headings with content descriptions, Figure/Table list, Abbreviations, References format, Formatting Guidelines.`,
+    draft:`Generate a comprehensive "Draft Report". Sections: (1) Title Page, (2) Executive Summary (300 words), (3) TOC, (4) Introduction (250 words), (5) Objectives, (6) Methodology, (7) Key Findings & Analysis (500+ words with subsections), (8) Discussion, (9) Conclusions, (10) Recommendations (10 prioritised), (11) Way Forward, (12) References, (13) Annexures.`,
+    pricing:`Generate "Pricing Calculation Reference Format" for ${p.name}. Include: Cost Components table (Labour, Equipment, Travel, Overheads, Profit, Taxes), Day Rate Calculator by role, Pricing tiers (Small/Medium/Large project), Optional add-ons, Sample Quotation layout, Pricing Assumptions.`,
+    techquote:`Generate a "Techno-Commercial Quotation Format". Include: Company header, Client info, Quotation No./Date, Technical Scope table (Item | Description | Specification | Qty | Unit | Rate | Amount), Terms & Conditions, Payment Schedule, Validity, Signature block.`,
+    bizplan:`Generate a "Complete Business Plan" for providing ${p.name} as a service. Include: Executive Summary, Company Overview, Vision/Mission/Values, Market Analysis (SWOT, TAM/SAM/SOM, competition), Services Portfolio, Marketing & Sales Strategy, Operations Plan, Team Structure, Financial Projections (3-year P&L, break-even), Risk Analysis, Growth Roadmap.`,
+    excel:`Generate "Multi-Project Excel Tracker" structure for ${p.name}. (1) Dashboard layout — KPI cards: Total Projects, On Track, At Risk, Delayed, Budget Utilisation, Revenue. (2) Project Registry (20 columns): Project ID | Client | Name | Status | Priority | Start | End | % Complete | Contract Value | PO Details | Invoice No. | Payment Status | Amount Received | Balance | PM | Location | RAG | Next Milestone | Issues | Notes. (3) Key Excel formulas and conditional formatting rules to implement.`,
+    pitch:`Generate a "Client Pitch" document for ${p.name}. Cover: WHY (problem, why now), WHAT (what we offer), HOW (methodology, approach), WHEN (timeline, phases), WHO (our team, credentials), HOW MUCH (pricing, ROI), NEXT STEPS (CTA). Make it compelling for ${p.client||'the client'}.`,
+    pitchdeck:`Generate a "VC / Investor Pitch Deck" for the business of ${p.name} services. 12 slides: 1-Cover, 2-Problem, 3-Solution, 4-Market Opportunity (TAM/SAM/SOM), 5-Business Model, 6-Traction/Credibility, 7-Methodology/Tech, 8-Team, 9-Competitive Landscape, 10-Financials & Projections, 11-The Ask/Use of Funds, 12-CTA/Contact. Each slide: Key Message + 5 bullets + Visual suggestion + Speaker Notes.`,
+    clientpresentation:`Generate a "Client Presentation" for ${p.name} for ${p.client||'the client'}. 12-15 slides: 1-Title, 2-Agenda, 3-About Us, 4-Your Challenge, 5-Our Solution, 6-Scope & Deliverables, 7-Methodology, 8-Team & Credentials, 9-Project Timeline, 10-Investment, 11-Case Study, 12-Next Steps, 13-Q&A/Contact. Include talking points and visual suggestions per slide.`,
+    marketing:`Generate a "Marketing & Sales Plan" for ${p.name} services. Include: ICP (Ideal Client Profile) analysis, Value Proposition canvas, Marketing Channels (digital + offline), Sales Funnel with conversion activities, 3-month Content Calendar, Pricing Strategy, KPIs & metrics, Monthly budget template.`,
+    emailmarketing:`Generate "Email Marketing Content" for ${p.name}. Create: (1) Cold Outreach Sequence (5 emails — intro, value, case study, urgency, breakup), (2) Follow-up Sequence (3 emails), (3) Newsletter Template, (4) Proposal Follow-up, (5) Onboarding Welcome. Each: Subject line (3 options), Body, CTA.`,
+    whatsapp:`Generate "WhatsApp Marketing Content" for ${p.name}. Create: (1) Cold Outreach Messages (5 variants), (2) Follow-up Messages (3 variants), (3) Broadcast Announcement Template, (4) Festival/Occasion Greeting with service mention, (5) Reference Request, (6) Quote Follow-up, (7) Testimonial Request. Keep messages concise and mobile-friendly.`,
+    pharmasample:`Generate "Sample Copy of ${p.name} — Pharma Industry" version. Adapt all content specifically for pharmaceutical companies: use pharma terminology, regulatory references (WHO-GMP, Schedule M, FDA 21 CFR, ICH guidelines), pharma-specific parameters, stakeholders. Show how this service applies in a pharma manufacturing context.`,
   };
-  return (pm[doc.id]||`Generate a professional "${doc.name}" document for the service "${p.name}". Make it detailed, ready to use and practical.\n\n${ctx}`)+`\n\nWrite in ${p.lang}. Use clear headings and tables where appropriate. ${b.cname?`This document is proprietary to ${b.cname}.`:'Generate as a professional proprietary document.'}`;
+
+  const taskDef = pm[doc.id]||`Generate a professional "${doc.name}" document for the service "${p.name}". Make it detailed, ready to use and practical.`;
+  
+  return `${systemPersona}\n\n${ctx}\n\n--- DOCUMENT TASK ---\n${taskDef}\n\n${outputDirectives}`;
 }
 
 // ── RESULTS ───────────────────────────────────────────────────────
@@ -229,15 +303,94 @@ function showResults(docs){
   document.getElementById('r-time').textContent=elapsed+'s';
   document.getElementById('final-grid').innerHTML=docs.map(d=>{
     const isErr=S.generated[d.id]?.startsWith('[Generation error');
-    return `<div class="fc-card ${isErr?'err-card':''}" onclick="previewDoc('${d.id}','${d.name.replace(/'/g,"\\'")}',this)"><div class="fc-badge">${isErr?'!':'✓'}</div><div class="fc-icon">${d.icon}</div><div class="fc-name">${d.name}</div><div class="fc-cat">${d.cat}</div></div>`;
+    return `<div class="fc-card ${isErr?'err-card':''}" onclick="previewDoc('${d.id}','${d.name.replace(/'/g,"\\'")}',this)">
+      <div class="fc-badge">${isErr?'!':'✓'}</div>
+      <div class="fc-icon">${d.icon}</div>
+      <div class="fc-name">${d.name}</div>
+      <div class="fc-cat">${d.cat}</div>
+      <button onclick="regenDoc(event,'${d.id}')" title="Regenerate Document" style="position:absolute;top:8px;right:8px;background:var(--bg);border:1px solid var(--border);color:var(--dim);border-radius:4px;cursor:pointer;padding:2px 6px;font-size:12px;">↻</button>
+    </div>`;
   }).join('');
   goTo(4);
 }
+
+let currentPreviewId = null;
 function previewDoc(id,name,el){
+  currentPreviewId = id;
   document.querySelectorAll('.fc-card').forEach(c=>c.classList.remove('active'));
-  el.classList.add('active');
+  if(el) el.classList.add('active');
   document.getElementById('pv-title').textContent=name;
-  document.getElementById('pv-content').textContent=S.generated[id]||'No content generated.';
+  
+  const content = S.generated[id]||'No content generated.';
+  document.getElementById('pv-edit').value = content;
+  
+  const pvContent = document.getElementById('pv-content');
+  if(content.startsWith('[Generation error') || content === 'No content generated.'){
+    pvContent.textContent = content;
+  }else{
+    pvContent.innerHTML = marked.parse(content);
+  }
+  
+  pvContent.style.display = 'block';
+  document.getElementById('pv-edit').style.display = 'none';
+  const btnEdit = document.getElementById('btn-edit-pv');
+  btnEdit.textContent = 'Edit';
+  btnEdit.style.display = content === 'No content generated.' ? 'none' : 'block';
+}
+
+function toggleEditPv(){
+  const btn = document.getElementById('btn-edit-pv');
+  const pvContent = document.getElementById('pv-content');
+  const pvEdit = document.getElementById('pv-edit');
+  if(btn.textContent === 'Edit'){
+    btn.textContent = 'Save';
+    pvContent.style.display = 'none';
+    pvEdit.style.display = 'block';
+  }else{
+    btn.textContent = 'Edit';
+    S.generated[currentPreviewId] = pvEdit.value;
+    if(pvEdit.value.startsWith('[Generation error')){
+      pvContent.textContent = pvEdit.value;
+    }else{
+      pvContent.innerHTML = marked.parse(pvEdit.value);
+    }
+    pvContent.style.display = 'block';
+    pvEdit.style.display = 'none';
+    showToast('Changes saved!','ok');
+  }
+}
+
+async function regenDoc(e, id){
+  e.stopPropagation();
+  const doc = DOCS.find(d => d.id === id);
+  if(!doc) return;
+  const btn = e.target;
+  btn.textContent = '⏳';
+  btn.style.pointerEvents = 'none';
+  showToast(`Regenerating ${doc.name}...`, 'ok');
+  
+  if(currentPreviewId === id) {
+    document.getElementById('pv-content').innerHTML = '<div style="color:var(--dim)">Regenerating...</div>';
+  }
+  
+  try {
+    S.generated[id] = await callAI(doc, 1, (content) => {
+      if(currentPreviewId === id) {
+        document.getElementById('pv-content').innerHTML = marked.parse(content) + '<span class="cursor" style="opacity:0.5">|</span>';
+        const pv = document.getElementById('pv-content');
+        if(pv.parentElement) pv.parentElement.scrollTop = pv.parentElement.scrollHeight;
+      }
+    });
+    showToast(`${doc.name} regenerated!`, 'ok');
+  } catch(err) {
+    S.generated[id] = `[Generation error]\n\n${err.message}`;
+    showToast(`Failed to regenerate ${doc.name}`, 'err');
+  }
+  
+  btn.textContent = '↻';
+  btn.style.pointerEvents = 'auto';
+  showResults(DOCS.filter(d=>S.selected.has(d.id))); // refresh UI
+  if(currentPreviewId === id) previewDoc(id, doc.name);
 }
 function copyPv(){
   const txt=document.getElementById('pv-content').textContent;
@@ -261,18 +414,23 @@ async function downloadZip(){
 <head>
   <meta charset="utf-8">
   <style>
-    body { font-family: 'Calibri', 'Arial', sans-serif; font-size: 11pt; line-height: 1.5; color: #000000; }
-    h1 { font-size: 20pt; color: #2e74b5; margin-bottom: 12pt; }
-    h2 { font-size: 16pt; color: #2e74b5; margin-top: 18pt; margin-bottom: 8pt; }
-    h3 { font-size: 14pt; color: #1f4d78; margin-top: 14pt; margin-bottom: 6pt; }
-    p { margin-bottom: 10pt; }
-    table { width: 100%; border-collapse: collapse; margin-bottom: 12pt; }
-    th, td { border: 1pt solid #bfbfbf; padding: 6pt; text-align: left; }
-    th { background-color: #f2f2f2; font-weight: bold; }
-    .header { text-align: center; margin-bottom: 24pt; border-bottom: 1pt solid #dddddd; padding-bottom: 12pt; }
-    .header-title { font-size: 24pt; font-weight: bold; margin-bottom: 6pt; }
-    .header-sub { font-size: 10pt; color: #555555; }
-    .watermark { text-align: center; font-size: 14pt; font-weight: bold; color: #ff0000; letter-spacing: 2pt; margin-bottom: 12pt; }
+    body { font-family: 'Segoe UI', 'Calibri', sans-serif; font-size: 11pt; line-height: 1.6; color: #333333; }
+    h1 { font-size: 22pt; color: #1a365d; margin-bottom: 16pt; border-bottom: 2pt solid #2b6cb0; padding-bottom: 4pt; }
+    h2 { font-size: 16pt; color: #2b6cb0; margin-top: 20pt; margin-bottom: 10pt; }
+    h3 { font-size: 13pt; color: #2d3748; margin-top: 16pt; margin-bottom: 8pt; font-weight: bold; }
+    p { margin-bottom: 12pt; text-align: justify; }
+    table { width: 100%; border-collapse: collapse; margin-top: 12pt; margin-bottom: 16pt; }
+    th { background-color: #ebf8ff; color: #2b6cb0; font-weight: bold; padding: 8pt; border: 1pt solid #cbd5e0; text-align: left; }
+    td { padding: 8pt; border: 1pt solid #cbd5e0; vertical-align: top; }
+    tr:nth-child(even) { background-color: #f7fafc; }
+    ul, ol { margin-bottom: 12pt; padding-left: 24pt; }
+    li { margin-bottom: 6pt; }
+    strong { color: #1a202c; }
+    blockquote { border-left: 4pt solid #cbd5e0; padding-left: 12pt; color: #4a5568; font-style: italic; margin-left: 0; margin-bottom: 12pt; }
+    .header { text-align: center; margin-bottom: 30pt; border-bottom: 2pt solid #e2e8f0; padding-bottom: 16pt; }
+    .header-title { font-size: 26pt; font-weight: bold; color: #1a365d; margin-bottom: 8pt; text-transform: uppercase; letter-spacing: 1pt; }
+    .header-sub { font-size: 11pt; color: #4a5568; line-height: 1.5; }
+    .watermark { text-align: center; font-size: 16pt; font-weight: bold; color: #e53e3e; letter-spacing: 3pt; margin-bottom: 16pt; border: 2pt solid #e53e3e; padding: 4pt; display: inline-block; }
   </style>
 </head>
 <body>
@@ -302,7 +460,7 @@ async function downloadZip(){
   }catch(e){document.getElementById('zip-status').textContent='Download failed: '+e.message;showToast('Download failed','err');}
   btn.disabled=false;btn.innerHTML='<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Download ZIP';
 }
-function restart(){S.generated={};S.selected=new Set(DOCS.map(d=>d.id));S.project={};document.querySelectorAll('#view-form input,#view-form textarea').forEach(el=>el.value='');document.getElementById('f-lang').value='English';goTo(1);}
+function restart(){S.generated={};S.selected=new Set(DOCS.map(d=>d.id));S.project={};S.referenceText='';document.getElementById('ref-status').textContent='';if(document.getElementById('f-reference'))document.getElementById('f-reference').value='';document.querySelectorAll('#view-form input,#view-form textarea').forEach(el=>el.value='');document.getElementById('f-lang').value='English';goTo(1);}
 
 // ── API MODAL ─────────────────────────────────────────────────────
 let activeProv='anthropic';
@@ -379,6 +537,11 @@ function showToast(msg,type='ok'){clearTimeout(toastTimer);const t=document.getE
 // ── INIT ──────────────────────────────────────────────────────────
 (function init(){
   try{
+    if(localStorage.getItem('rig_theme')==='light'){
+      document.body.classList.add('light-theme');
+      const ti = document.getElementById('theme-icon');
+      if(ti) ti.textContent = '🌙';
+    }
     const a=JSON.parse(localStorage.getItem('rig_api')||'{}');
     if(a.key){S.api=a;activeProv=a.provider||'anthropic';const btn=document.getElementById('btn-api-open'),dot=document.getElementById('api-dot'),lbl=document.getElementById('api-lbl');btn.classList.add('on-lime');dot.style.cssText='background:var(--lime);box-shadow:0 0 6px var(--lime)';lbl.textContent=PROV[a.provider]?.name||'Connected';}
     const b=JSON.parse(localStorage.getItem('rig_brand')||'{}');

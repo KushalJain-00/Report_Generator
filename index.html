@@ -25,6 +25,9 @@
     <span class="sp" id="sp4">04 Download</span>
   </div>
   <div class="topbar-right">
+    <button class="tbtn" id="btn-theme" onclick="toggleTheme()" style="padding: 7px 10px;" title="Toggle Light/Dark Theme">
+      <span id="theme-icon" style="font-size:14px;line-height:1;">☀️</span>
+    </button>
     <button class="tbtn" id="btn-brand-open" onclick="openBrand()">
       <span class="tdot" id="brand-dot"></span>
       <span id="brand-lbl">Branding</span>
@@ -58,16 +61,24 @@
           <label>Service / Report Name *</label>
           <input type="text" id="f-name" placeholder="e.g. Water Audit, Energy Audit, ESG Report, FSSAI Compliance Audit...">
         </div>
-        <div class="field"><label>Sector / Industry</label><input type="text" id="f-sector" placeholder="e.g. Water & Sanitation, Pharma, Food & Bev"></div>
-        <div class="field"><label>Geography / Location</label><input type="text" id="f-geo" placeholder="e.g. Surat, Gujarat, India"></div>
-        <div class="field"><label>Client / Organisation</label><input type="text" id="f-client" placeholder="e.g. Surat Municipal Corporation"></div>
-        <div class="field"><label>Target Audience</label><input type="text" id="f-audience" placeholder="e.g. Municipal Engineers, VC Investors, Board"></div>
+        <div class="field"><label>Sector / Industry</label><input type="text" id="f-sector" placeholder="e.g. Water & Sanitation, Pharma, Food & Bev" autocomplete="off"></div>
+        <div class="field"><label>Geography / Location</label><input type="text" id="f-geo" placeholder="e.g. Surat, Gujarat, India" autocomplete="off"></div>
+        <div class="field"><label>Client / Organisation</label><input type="text" id="f-client" placeholder="e.g. Surat Municipal Corporation" autocomplete="off"></div>
+        <div class="field"><label>Target Audience</label><input type="text" id="f-audience" placeholder="e.g. Municipal Engineers, VC Investors, Board" autocomplete="off"></div>
         <div class="field fc"><label>Brief Description / Objective</label><textarea id="f-desc" placeholder="Describe what this service does, its goal, and why it matters..."></textarea></div>
-        <div class="field"><label>Standards / Regulations</label><input type="text" id="f-standards" placeholder="e.g. BIS 10500, WHO, FSSAI, ISO 14001"></div>
-        <div class="field"><label>Pricing / Budget Estimate</label><input type="text" id="f-price" placeholder="e.g. ₹2,50,000 or USD 5,000"></div>
-        <div class="field"><label>Project Duration</label><input type="text" id="f-duration" placeholder="e.g. 8 weeks, 3 months"></div>
+        <div class="field"><label>Standards / Regulations</label><input type="text" id="f-standards" placeholder="e.g. BIS 10500, WHO, FSSAI, ISO 14001" autocomplete="off"></div>
+        <div class="field"><label>Pricing / Budget Estimate</label><input type="text" id="f-price" placeholder="e.g. ₹2,50,000 or USD 5,000" autocomplete="off"></div>
+        <div class="field"><label>Project Duration</label><input type="text" id="f-duration" placeholder="e.g. 8 weeks, 3 months" readonly onfocus="this.removeAttribute('readonly');" autocomplete="off"></div>
         <div class="field"><label>Output Language</label>
           <select id="f-lang"><option>English</option><option>Hindi</option><option>Gujarati</option><option>Spanish</option><option>French</option><option>Arabic</option><option>Portuguese</option></select>
+        </div>
+        <div class="field" style="grid-column:1/-1">
+          <label>Reference Document (Optional)</label>
+          <div style="display:flex; gap:10px; align-items:center;">
+            <input type="file" id="f-reference" accept=".txt,.md,.json,.csv,.js,.html" style="font-size:12px;color:var(--white);">
+            <span id="ref-status" style="font-size:12px; color:var(--dim);"></span>
+          </div>
+          <div style="font-size:11px;color:var(--dim);margin-top:4px;">Upload a sample report or text file to guide the AI's formatting and style.</div>
         </div>
       </div>
     </div>
@@ -124,7 +135,10 @@
       <div class="stat-box"><div class="stat-num warn" id="cnt-gen">0</div><div class="stat-lbl">In Progress</div></div>
       <div class="stat-box"><div class="stat-num dim" id="cnt-left">—</div><div class="stat-lbl">Remaining</div></div>
     </div>
-    <div class="gen-grid" id="gen-grid"></div>
+    <div class="live-stream-box" style="margin-top:16px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:16px;height:250px;overflow-y:auto;text-align:left;font-size:13px;line-height:1.5;color:var(--white);">
+      <div id="live-stream-content" style="color:var(--dim);font-family:sans-serif;">Waiting for AI...</div>
+    </div>
+    <div class="gen-grid" id="gen-grid" style="margin-top:16px;"></div>
   </div>
 
   <!-- VIEW 4: RESULTS -->
@@ -149,8 +163,15 @@
     </div>
     <div class="final-grid" id="final-grid"></div>
     <div class="preview-panel">
-      <div class="pv-head"><span class="pv-title" id="pv-title">Select a document to preview</span><button class="btn-copy" onclick="copyPv()">Copy</button></div>
-      <div class="pv-content" id="pv-content"><div class="pv-placeholder">← Click any document card above to preview its content</div></div>
+      <div class="pv-head">
+        <span class="pv-title" id="pv-title">Select a document to preview</span>
+        <div style="display:flex;gap:8px;">
+          <button class="btn-copy" id="btn-edit-pv" onclick="toggleEditPv()" style="display:none;">Edit</button>
+          <button class="btn-copy" onclick="copyPv()">Copy</button>
+        </div>
+      </div>
+      <div class="pv-content" id="pv-content" style="padding-bottom:20px;line-height:1.6;color:var(--white);"><div class="pv-placeholder">← Click any document card above to preview its content</div></div>
+      <textarea class="pv-edit" id="pv-edit" style="display:none;width:100%;height:calc(100% - 40px);background:var(--bg2);color:var(--white);border:none;padding:16px;font-family:monospace;font-size:13px;resize:none;outline:none;"></textarea>
     </div>
     <div id="zip-status" style="font-size:11px;color:var(--dim);text-align:center;margin-top:6px"></div>
   </div>
