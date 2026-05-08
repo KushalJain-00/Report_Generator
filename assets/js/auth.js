@@ -1,3 +1,28 @@
+// ── AUTO-SKIP AUTH IF ALREADY SIGNED IN ───────────────────────────
+(function checkAutoRedirect() {
+  try {
+    if (localStorage.getItem('rig_signed_in') === 'true') {
+      window.location.replace('index.html');
+      return;
+    }
+  } catch(e) {}
+  // Also check IndexedDB as fallback
+  try {
+    const req = indexedDB.open('rig_store', 1);
+    req.onupgradeneeded = () => req.result.createObjectStore('settings');
+    req.onsuccess = () => {
+      const db = req.result;
+      try {
+        const tx = db.transaction('settings', 'readonly');
+        const getReq = tx.objectStore('settings').get('rig_signed_in');
+        getReq.onsuccess = () => {
+          if (getReq.result === true) window.location.replace('index.html');
+        };
+      } catch(e) {}
+    };
+  } catch(e) {}
+})();
+
 // ── ANIMATED BACKGROUND CANVAS ────────────────────────────────────
 const canvas = document.getElementById('bg-canvas');
 const ctx = canvas.getContext('2d');
@@ -236,6 +261,20 @@ function socialAuth(provider) {
 function showSuccess(title, sub) {
   document.getElementById('success-msg').textContent = title;
   document.getElementById('success-sub').textContent = sub;
+
+  // Persist signed-in flag so user auto-skips auth next time
+  try { localStorage.setItem('rig_signed_in', 'true'); } catch(e) {}
+  try {
+    const req = indexedDB.open('rig_store', 1);
+    req.onupgradeneeded = () => req.result.createObjectStore('settings');
+    req.onsuccess = () => {
+      const db = req.result;
+      try {
+        const tx = db.transaction('settings', 'readwrite');
+        tx.objectStore('settings').put(true, 'rig_signed_in');
+      } catch(e) {}
+    };
+  } catch(e) {}
 
   const overlay = document.getElementById('success-overlay');
   overlay.classList.add('show');

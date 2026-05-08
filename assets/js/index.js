@@ -60,6 +60,62 @@ const PROV={
   groq:{name:'Groq',models:['llama-3.3-70b-versatile','llama-3.1-8b-instant','mixtral-8x7b-32768','gemma2-9b-it'],ph:'gsk_...',note:'Get key at <a href="https://console.groq.com/keys" target="_blank">console.groq.com</a>'},
 };
 
+// ── PERSISTENT STORAGE (localStorage + IndexedDB fallback) ────────
+const RIG_DB_NAME = 'rig_store';
+const RIG_DB_VERSION = 1;
+const RIG_STORE_NAME = 'settings';
+
+function openRigDB() {
+  return new Promise((resolve, reject) => {
+    try {
+      const req = indexedDB.open(RIG_DB_NAME, RIG_DB_VERSION);
+      req.onupgradeneeded = () => req.result.createObjectStore(RIG_STORE_NAME);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    } catch(e) { reject(e); }
+  });
+}
+
+async function idbSet(key, value) {
+  try {
+    const db = await openRigDB();
+    const tx = db.transaction(RIG_STORE_NAME, 'readwrite');
+    tx.objectStore(RIG_STORE_NAME).put(value, key);
+    return new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = rej; });
+  } catch(e) { /* IndexedDB not available */ }
+}
+
+async function idbGet(key) {
+  try {
+    const db = await openRigDB();
+    const tx = db.transaction(RIG_STORE_NAME, 'readonly');
+    const req = tx.objectStore(RIG_STORE_NAME).get(key);
+    return new Promise((res, rej) => { req.onsuccess = () => res(req.result); req.onerror = rej; });
+  } catch(e) { return undefined; }
+}
+
+// Save to BOTH localStorage and IndexedDB for maximum persistence
+function persistSave(key, obj) {
+  const json = JSON.stringify(obj);
+  try { localStorage.setItem(key, json); } catch(e) {}
+  idbSet(key, obj).catch(() => {});
+}
+
+// Load from localStorage first, fall back to IndexedDB
+async function persistLoad(key) {
+  try {
+    const ls = localStorage.getItem(key);
+    if (ls) return JSON.parse(ls);
+  } catch(e) {}
+  // Fallback to IndexedDB
+  const val = await idbGet(key);
+  if (val) {
+    // Sync back to localStorage for next time
+    try { localStorage.setItem(key, JSON.stringify(val)); } catch(e) {}
+  }
+  return val || null;
+}
+
 // ── NAV & THEME ───────────────────────────────────────────────────
 function toggleTheme(){
   const isLight = document.body.classList.toggle('light-theme');
@@ -493,7 +549,7 @@ function saveApi(){
   if(!key){document.getElementById('api-status-box').innerHTML=`<div class="api-status-err"><div class="sdot"></div>Please paste your API key.</div>`;return;}
   const model=document.getElementById('model-sel').value;
   S.api={provider:activeProv,key,model};
-  try{localStorage.setItem('rig_api',JSON.stringify({provider:activeProv,key,model}));}catch(e){}
+  persistSave('rig_api', {provider:activeProv,key,model});
   document.getElementById('api-status-box').innerHTML=`<div class="api-status-ok"><div class="sdot"></div>Connected — ${PROV[activeProv].name} / ${model}</div>`;
   const btn=document.getElementById('btn-api-open'),dot=document.getElementById('api-dot'),lbl=document.getElementById('api-lbl');
   btn.classList.remove('on-cyan');btn.classList.add('on-lime');dot.style.cssText='background:var(--lime);box-shadow:0 0 6px var(--lime)';lbl.textContent=PROV[activeProv].name;
@@ -524,7 +580,8 @@ function handleLogo(inp){
 }
 function saveBrand(){
   S.brand={cname:document.getElementById('b-cname').value.trim(),email:document.getElementById('b-email').value.trim(),phone:document.getElementById('b-phone').value.trim(),web:document.getElementById('b-web').value.trim(),addr:document.getElementById('b-addr').value.trim(),logoDataUrl:S.brand.logoDataUrl||'',watermark:document.getElementById('wm-enable').checked,watermarkText:document.getElementById('wm-type').value};
-  try{const tmp={...S.brand,logoDataUrl:''};localStorage.setItem('rig_brand',JSON.stringify(tmp));}catch(e){}
+  const tmp={...S.brand,logoDataUrl:''};
+  persistSave('rig_brand', tmp);
   const btn=document.getElementById('btn-brand-open'),dot=document.getElementById('brand-dot'),lbl=document.getElementById('brand-lbl');
   if(S.brand.cname||S.brand.logoDataUrl){btn.classList.remove('on-lime');btn.classList.add('on-cyan');dot.style.cssText='background:var(--cyan);box-shadow:0 0 6px var(--cyan)';lbl.textContent=S.brand.cname||'Branded';}
   closeBrand();showToast('Branding saved!','ok');
@@ -535,17 +592,78 @@ let toastTimer;
 function showToast(msg,type='ok'){clearTimeout(toastTimer);const t=document.getElementById('toast'),icon=document.getElementById('t-icon'),m=document.getElementById('t-msg');t.className=`toast ${type}`;icon.textContent=type==='ok'?'✓':'✕';m.textContent=msg;t.classList.add('show');toastTimer=setTimeout(()=>t.classList.remove('show'),3500);}
 
 // ── INIT ──────────────────────────────────────────────────────────
-(function init(){
-  try{
-    if(localStorage.getItem('rig_theme')==='light'){
+function applyApiState(a) {
+  if (a && a.key) {
+    S.api = a;
+    activeProv = a.provider || 'anthropic';
+    const btn = document.getElementById('btn-api-open');
+    const dot = document.getElementById('api-dot');
+    const lbl = document.getElementById('api-lbl');
+    btn.classList.add('on-lime');
+    dot.style.cssText = 'background:var(--lime);box-shadow:0 0 6px var(--lime)';
+    lbl.textContent = PROV[a.provider]?.name || 'Connected';
+    return true;
+  }
+  return false;
+}
+
+function applyBrandState(b) {
+  if (b && b.cname) {
+    Object.assign(S.brand, b);
+    const btn = document.getElementById('btn-brand-open');
+    const dot = document.getElementById('brand-dot');
+    const lbl = document.getElementById('brand-lbl');
+    btn.classList.add('on-cyan');
+    dot.style.cssText = 'background:var(--cyan);box-shadow:0 0 6px var(--cyan)';
+    lbl.textContent = b.cname || 'Branded';
+    return true;
+  }
+  return false;
+}
+
+(async function init(){
+  // Theme
+  try {
+    if (localStorage.getItem('rig_theme') === 'light') {
       document.body.classList.add('light-theme');
       const ti = document.getElementById('theme-icon');
-      if(ti) ti.textContent = '🌙';
+      if (ti) ti.textContent = '🌙';
     }
-    const a=JSON.parse(localStorage.getItem('rig_api')||'{}');
-    if(a.key){S.api=a;activeProv=a.provider||'anthropic';const btn=document.getElementById('btn-api-open'),dot=document.getElementById('api-dot'),lbl=document.getElementById('api-lbl');btn.classList.add('on-lime');dot.style.cssText='background:var(--lime);box-shadow:0 0 6px var(--lime)';lbl.textContent=PROV[a.provider]?.name||'Connected';}
-    const b=JSON.parse(localStorage.getItem('rig_brand')||'{}');
-    if(b.cname){Object.assign(S.brand,b);const btn=document.getElementById('btn-brand-open'),dot=document.getElementById('brand-dot'),lbl=document.getElementById('brand-lbl');btn.classList.add('on-cyan');dot.style.cssText='background:var(--cyan);box-shadow:0 0 6px var(--cyan)';lbl.textContent=b.cname||'Branded';}
-  }catch(e){}
+  } catch(e) {}
+
+  // API Key — try localStorage first, then IndexedDB fallback
+  let apiLoaded = false;
+  try {
+    const a = JSON.parse(localStorage.getItem('rig_api') || '{}');
+    apiLoaded = applyApiState(a);
+  } catch(e) {}
+
+  if (!apiLoaded) {
+    try {
+      const a = await persistLoad('rig_api');
+      apiLoaded = applyApiState(a);
+      if (apiLoaded) console.log('[RIG] API key restored from IndexedDB backup');
+    } catch(e) {}
+  }
+
+  // Branding — try localStorage first, then IndexedDB fallback
+  let brandLoaded = false;
+  try {
+    const b = JSON.parse(localStorage.getItem('rig_brand') || '{}');
+    brandLoaded = applyBrandState(b);
+  } catch(e) {}
+
+  if (!brandLoaded) {
+    try {
+      const b = await persistLoad('rig_brand');
+      brandLoaded = applyBrandState(b);
+    } catch(e) {}
+  }
+
+  // Show confirmation if API key was auto-loaded
+  if (apiLoaded) {
+    setTimeout(() => showToast(`API key loaded — ${PROV[S.api.provider]?.name || 'Connected'}`, 'ok'), 500);
+  }
+
   renderDocGrid();
 })();
