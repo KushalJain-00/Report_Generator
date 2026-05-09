@@ -51,6 +51,9 @@ const S={
   project:{},selected:new Set(DOCS.map(d=>d.id)),generated:{},filter:'all',view:1,startTime:null,referenceText:'',
   api:{provider:'anthropic',key:'',model:''},
   brand:{cname:'',email:'',phone:'',web:'',addr:'',logoDataUrl:'',watermark:false,watermarkText:'CONFIDENTIAL'},
+  brandProfiles:[],
+  activeBrandIdx:-1,
+  tokenUsage:{input:0,output:0,total:0},
 };
 const PROV={
   anthropic:{name:'Anthropic',models:['claude-sonnet-4-20250514','claude-opus-4-5','claude-haiku-4-5-20251001'],ph:'sk-ant-api03-...',note:'Get key at <a href="https://console.anthropic.com" target="_blank">console.anthropic.com</a>'},
@@ -166,9 +169,11 @@ function updateSelCount(){document.getElementById('sel-count').textContent=`${S.
 async function startGen(){
   if(S.selected.size===0){showToast('Select at least one document','err');return;}
   S.generated={};S.startTime=Date.now();
+  S.tokenUsage={input:0,output:0,total:0};
   const toGen=DOCS.filter(d=>S.selected.has(d.id));
   document.getElementById('gen-grid').innerHTML=toGen.map(d=>`<div class="gc" id="gc-${d.id}"><div class="gc-status s-wait" id="gs-${d.id}">wait</div><div class="gc-icon">${d.icon}</div><div class="gc-name">${d.name}</div></div>`).join('');
   document.getElementById('cnt-left').textContent=toGen.length;document.getElementById('cnt-done').textContent=0;document.getElementById('cnt-gen').textContent=0;
+  updateTokenUI();
   goTo(3);
   let done=0;
   for(let i=0;i<toGen.length;i++){
@@ -192,6 +197,7 @@ async function startGen(){
       card?.classList.remove('generating');card?.classList.add('error');
       if(stat){stat.className='gc-status s-err';stat.textContent='err';}
     }
+    updateTokenUI();
     document.getElementById('cnt-done').textContent=done;
     document.getElementById('cnt-gen').textContent=0;
     const pct=Math.round(((i+1)/toGen.length)*100);
@@ -204,10 +210,21 @@ async function startGen(){
   setTimeout(()=>showResults(toGen),800);
 }
 
+function updateTokenUI(){
+  const fmt=n=>n>=1000?(Math.round(n/100)/10)+'k':n;
+  const ti=document.getElementById('tok-in'),to=document.getElementById('tok-out'),tt=document.getElementById('tok-total');
+  if(ti)ti.textContent=fmt(S.tokenUsage.input);
+  if(to)to.textContent=fmt(S.tokenUsage.output);
+  if(tt)tt.textContent=fmt(S.tokenUsage.total);
+}
+
 // ── AI CALL ───────────────────────────────────────────────────────
+function estimateTokens(text){ return Math.ceil((text||'').length / 4); }
+
 async function callAI(doc, attempt=1, onChunk=null){
   const {provider:p,key,model}=S.api;
   const prompt=buildPrompt(doc,S.project,S.brand);
+  const promptTokensEst = estimateTokens(prompt);
   try{
     let url, headers, body;
     if(p==='anthropic'){
@@ -218,7 +235,7 @@ async function callAI(doc, attempt=1, onChunk=null){
       url=p==='openai'?'https://api.openai.com/v1/chat/completions':(p==='openrouter'?'https://openrouter.ai/api/v1/chat/completions':'https://api.groq.com/openai/v1/chat/completions');
       headers={'Content-Type':'application/json','Authorization':`Bearer ${key}`};
       if(p==='openrouter') headers['HTTP-Referer']='https://rig-app.com';
-      body=JSON.stringify({model,max_tokens:4096,messages:[{role:'user',content:prompt}],stream:true});
+      body=JSON.stringify({model,max_tokens:4096,messages:[{role:'user',content:prompt}],stream:true,stream_options:{include_usage:true}});
     }else if(p==='gemini'){
       url=`https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${key}`;
       headers={'Content-Type':'application/json'};
@@ -237,6 +254,7 @@ async function callAI(doc, attempt=1, onChunk=null){
     const reader = r.body.getReader();
     const decoder = new TextDecoder();
     let content = '';
+    let tokIn = 0, tokOut = 0;
     while(true){
       const {done, value} = await reader.read();
       if(done) break;
@@ -248,9 +266,18 @@ async function callAI(doc, attempt=1, onChunk=null){
           try{
             const data = JSON.parse(tline.slice(6));
             let textDelta = '';
-            if(p==='anthropic' && data.type==='content_block_delta') textDelta = data.delta?.text||'';
-            else if(['openai','openrouter','groq'].includes(p)) textDelta = data.choices?.[0]?.delta?.content||'';
-            else if(p==='gemini') textDelta = data.candidates?.[0]?.content?.parts?.[0]?.text||'';
+            // Extract token usage from stream events
+            if(p==='anthropic'){
+              if(data.type==='content_block_delta') textDelta = data.delta?.text||'';
+              if(data.type==='message_start' && data.message?.usage) tokIn = data.message.usage.input_tokens||0;
+              if(data.type==='message_delta' && data.usage) tokOut = data.usage.output_tokens||0;
+            } else if(['openai','openrouter','groq'].includes(p)){
+              textDelta = data.choices?.[0]?.delta?.content||'';
+              if(data.usage){tokIn=data.usage.prompt_tokens||0;tokOut=data.usage.completion_tokens||0;}
+            } else if(p==='gemini'){
+              textDelta = data.candidates?.[0]?.content?.parts?.[0]?.text||'';
+              if(data.usageMetadata){tokIn=data.usageMetadata.promptTokenCount||0;tokOut=data.usageMetadata.candidatesTokenCount||0;}
+            }
             if(textDelta){
               content += textDelta;
               if(onChunk) onChunk(content);
@@ -259,6 +286,12 @@ async function callAI(doc, attempt=1, onChunk=null){
         }
       }
     }
+    // Fallback estimation if API didn't report tokens
+    if(!tokIn) tokIn = promptTokensEst;
+    if(!tokOut) tokOut = estimateTokens(content);
+    S.tokenUsage.input += tokIn;
+    S.tokenUsage.output += tokOut;
+    S.tokenUsage.total = S.tokenUsage.input + S.tokenUsage.output;
     return content;
   } catch(err) {
     if(err.message==='RETRY_429' && attempt<3){
@@ -357,6 +390,10 @@ function showResults(docs){
   document.getElementById('r-docs').textContent=Object.keys(S.generated).length;
   document.getElementById('r-words').textContent=totalWords>=1000?(Math.round(totalWords/100)/10)+'k':totalWords;
   document.getElementById('r-time').textContent=elapsed+'s';
+  const fmtT=n=>n>=1000?(Math.round(n/100)/10)+'k':n;
+  document.getElementById('r-tok-in').textContent=fmtT(S.tokenUsage.input);
+  document.getElementById('r-tok-out').textContent=fmtT(S.tokenUsage.output);
+  document.getElementById('r-tok-total').textContent=fmtT(S.tokenUsage.total);
   document.getElementById('final-grid').innerHTML=docs.map(d=>{
     const isErr=S.generated[d.id]?.startsWith('[Generation error');
     return `<div class="fc-card ${isErr?'err-card':''}" onclick="previewDoc('${d.id}','${d.name.replace(/'/g,"\\'")}',this)">
@@ -516,7 +553,7 @@ async function downloadZip(){
   }catch(e){document.getElementById('zip-status').textContent='Download failed: '+e.message;showToast('Download failed','err');}
   btn.disabled=false;btn.innerHTML='<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Download ZIP';
 }
-function restart(){S.generated={};S.selected=new Set(DOCS.map(d=>d.id));S.project={};S.referenceText='';document.getElementById('ref-status').textContent='';if(document.getElementById('f-reference'))document.getElementById('f-reference').value='';document.querySelectorAll('#view-form input,#view-form textarea').forEach(el=>el.value='');document.getElementById('f-lang').value='English';goTo(1);}
+function restart(){S.generated={};S.selected=new Set(DOCS.map(d=>d.id));S.project={};S.referenceText='';S.tokenUsage={input:0,output:0,total:0};document.getElementById('ref-status').textContent='';if(document.getElementById('f-reference'))document.getElementById('f-reference').value='';document.querySelectorAll('#view-form input,#view-form textarea').forEach(el=>el.value='');document.getElementById('f-lang').value='English';goTo(1);}
 
 // ── API MODAL ─────────────────────────────────────────────────────
 let activeProv='anthropic';
@@ -556,17 +593,89 @@ function saveApi(){
   setTimeout(closeApi,700);showToast(`API key saved — ${PROV[activeProv].name}`,'ok');
 }
 
-// ── BRAND MODAL ───────────────────────────────────────────────────
+// ── BRAND MODAL (Multi-Profile) ───────────────────────────────────
+let editingBrandIdx = -1; // -1 = new profile
+let tempLogoDataUrl = '';
+
 function openBrand(){
   document.getElementById('brand-overlay').classList.add('open');
-  const b=S.brand;
+  showBrandList();
+}
+function closeBrand(){document.getElementById('brand-overlay').classList.remove('open');}
+
+function showBrandList(){
+  document.getElementById('brand-list-view').style.display='';
+  document.getElementById('brand-list-foot').style.display='';
+  document.getElementById('brand-form-view').style.display='none';
+  document.getElementById('brand-form-foot').style.display='none';
+  document.getElementById('brand-modal-title').textContent='Company Branding';
+  document.getElementById('brand-modal-sub').textContent='Manage your branding profiles. Select one to use in generated documents.';
+  renderBrandList();
+}
+
+function renderBrandList(){
+  const list=document.getElementById('brand-profiles-list');
+  if(S.brandProfiles.length===0){
+    list.innerHTML='<div class="bp-empty"><div class="bp-empty-icon">🏢</div>No branding profiles yet.<br>Add one to brand your documents.</div>';
+    return;
+  }
+  list.innerHTML=S.brandProfiles.map((b,i)=>{
+    const isActive = i===S.activeBrandIdx;
+    return `<div class="bp-card${isActive?' bp-active':''}" onclick="selectBrandProfile(${i})">
+      ${isActive?'<div class="bp-badge">Active</div>':''}
+      <div class="bp-logo">${b.logoDataUrl?`<img src="${b.logoDataUrl}" alt="">`:'🏢'}</div>
+      <div class="bp-info">
+        <div class="bp-name">${b.cname||'Unnamed'}</div>
+        <div class="bp-meta">${[b.email,b.phone,b.web].filter(Boolean).join(' · ')||'No details'}</div>
+      </div>
+      <div class="bp-actions">
+        <button class="bp-abtn" onclick="event.stopPropagation();showBrandForm(${i})" title="Edit">✏️</button>
+        <button class="bp-abtn bp-del" onclick="event.stopPropagation();deleteBrandProfile(${i})" title="Delete">🗑️</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function selectBrandProfile(idx){
+  S.activeBrandIdx=idx;
+  S.brand={...S.brandProfiles[idx]};
+  persistSaveBrands();
+  updateBrandTopbar();
+  renderBrandList();
+  showToast(`Using "${S.brand.cname}" branding`,'ok');
+}
+
+function deleteBrandProfile(idx){
+  if(!confirm(`Delete "${S.brandProfiles[idx].cname||'Unnamed'}" profile?`)) return;
+  S.brandProfiles.splice(idx,1);
+  if(S.activeBrandIdx===idx){S.activeBrandIdx=-1;S.brand={cname:'',email:'',phone:'',web:'',addr:'',logoDataUrl:'',watermark:false,watermarkText:'CONFIDENTIAL'};}
+  else if(S.activeBrandIdx>idx) S.activeBrandIdx--;
+  persistSaveBrands();
+  updateBrandTopbar();
+  renderBrandList();
+  showToast('Profile deleted','ok');
+}
+
+function showBrandForm(idx){
+  editingBrandIdx=idx;
+  document.getElementById('brand-list-view').style.display='none';
+  document.getElementById('brand-list-foot').style.display='none';
+  document.getElementById('brand-form-view').style.display='';
+  document.getElementById('brand-form-foot').style.display='';
+  document.getElementById('brand-modal-title').textContent=idx===-1?'New Branding Profile':'Edit Branding Profile';
+  document.getElementById('brand-modal-sub').textContent=idx===-1?'Fill in your company details for document branding.':'Update your company details.';
+  const b=idx>=0?S.brandProfiles[idx]:{cname:'',email:'',phone:'',web:'',addr:'',logoDataUrl:'',watermark:false,watermarkText:'CONFIDENTIAL'};
+  tempLogoDataUrl=b.logoDataUrl||'';
   ['cname','email','phone','web','addr'].forEach(k=>{const el=document.getElementById(`b-${k}`);if(el) el.value=b[k]||'';});
   document.getElementById('wm-enable').checked=b.watermark;
   document.getElementById('wm-type').disabled=!b.watermark;
   document.getElementById('wm-type').value=b.watermarkText||'CONFIDENTIAL';
-  if(b.logoDataUrl){const img=document.getElementById('logo-img-prev');img.src=b.logoDataUrl;img.style.display='block';document.getElementById('logo-upload-label').classList.add('has-logo');}
+  const img=document.getElementById('logo-img-prev');
+  const label=document.getElementById('logo-upload-label');
+  if(b.logoDataUrl){img.src=b.logoDataUrl;img.style.display='block';label.classList.add('has-logo');}
+  else{img.src='';img.style.display='none';label.classList.remove('has-logo');}
 }
-function closeBrand(){document.getElementById('brand-overlay').classList.remove('open');}
+
 function handleLogo(inp){
   const file=inp.files[0];if(!file) return;
   const reader=new FileReader();
@@ -574,17 +683,41 @@ function handleLogo(inp){
     const url=e.target.result;
     const img=document.getElementById('logo-img-prev');img.src=url;img.style.display='block';
     document.getElementById('logo-upload-label').classList.add('has-logo');
-    S.brand.logoDataUrl=url;
+    tempLogoDataUrl=url;
   };
   reader.readAsDataURL(file);
 }
+
 function saveBrand(){
-  S.brand={cname:document.getElementById('b-cname').value.trim(),email:document.getElementById('b-email').value.trim(),phone:document.getElementById('b-phone').value.trim(),web:document.getElementById('b-web').value.trim(),addr:document.getElementById('b-addr').value.trim(),logoDataUrl:S.brand.logoDataUrl||'',watermark:document.getElementById('wm-enable').checked,watermarkText:document.getElementById('wm-type').value};
-  const tmp={...S.brand,logoDataUrl:''};
-  persistSave('rig_brand', tmp);
+  const cname=document.getElementById('b-cname').value.trim();
+  if(!cname){showToast('Company name is required','err');document.getElementById('b-cname').classList.add('err');return;}
+  document.getElementById('b-cname').classList.remove('err');
+  const profile={cname,email:document.getElementById('b-email').value.trim(),phone:document.getElementById('b-phone').value.trim(),web:document.getElementById('b-web').value.trim(),addr:document.getElementById('b-addr').value.trim(),logoDataUrl:tempLogoDataUrl||'',watermark:document.getElementById('wm-enable').checked,watermarkText:document.getElementById('wm-type').value};
+  if(editingBrandIdx>=0){
+    S.brandProfiles[editingBrandIdx]=profile;
+    if(S.activeBrandIdx===editingBrandIdx) S.brand={...profile};
+  }else{
+    S.brandProfiles.push(profile);
+    S.activeBrandIdx=S.brandProfiles.length-1;
+    S.brand={...profile};
+  }
+  persistSaveBrands();
+  updateBrandTopbar();
+  showBrandList();
+  showToast(`"${cname}" saved!`,'ok');
+}
+
+function persistSaveBrands(){
+  const data=S.brandProfiles.map(b=>({...b,logoDataUrl:''}));
+  persistSave('rig_brands',{profiles:data,activeIdx:S.activeBrandIdx});
+  // Keep old key for backwards compat
+  if(S.activeBrandIdx>=0){const tmp={...S.brand,logoDataUrl:''};persistSave('rig_brand',tmp);}
+}
+
+function updateBrandTopbar(){
   const btn=document.getElementById('btn-brand-open'),dot=document.getElementById('brand-dot'),lbl=document.getElementById('brand-lbl');
-  if(S.brand.cname||S.brand.logoDataUrl){btn.classList.remove('on-lime');btn.classList.add('on-cyan');dot.style.cssText='background:var(--cyan);box-shadow:0 0 6px var(--cyan)';lbl.textContent=S.brand.cname||'Branded';}
-  closeBrand();showToast('Branding saved!','ok');
+  if(S.brand.cname){btn.classList.remove('on-lime');btn.classList.add('on-cyan');dot.style.cssText='background:var(--cyan);box-shadow:0 0 6px var(--cyan)';lbl.textContent=S.brand.cname;}
+  else{btn.classList.remove('on-cyan');dot.style.cssText='';lbl.textContent='Branding';}
 }
 
 // ── TOAST ─────────────────────────────────────────────────────────
@@ -607,15 +740,25 @@ function applyApiState(a) {
   return false;
 }
 
-function applyBrandState(b) {
+function applyBrandsState(data) {
+  if (data && data.profiles && data.profiles.length > 0) {
+    S.brandProfiles = data.profiles;
+    S.activeBrandIdx = data.activeIdx >= 0 && data.activeIdx < data.profiles.length ? data.activeIdx : 0;
+    S.brand = {...S.brandProfiles[S.activeBrandIdx]};
+    updateBrandTopbar();
+    return true;
+  }
+  return false;
+}
+
+// Migrate old single brand to new multi-brand format
+function migrateLegacyBrand(b) {
   if (b && b.cname) {
-    Object.assign(S.brand, b);
-    const btn = document.getElementById('btn-brand-open');
-    const dot = document.getElementById('brand-dot');
-    const lbl = document.getElementById('brand-lbl');
-    btn.classList.add('on-cyan');
-    dot.style.cssText = 'background:var(--cyan);box-shadow:0 0 6px var(--cyan)';
-    lbl.textContent = b.cname || 'Branded';
+    S.brandProfiles = [b];
+    S.activeBrandIdx = 0;
+    S.brand = {...b};
+    persistSaveBrands();
+    updateBrandTopbar();
     return true;
   }
   return false;
@@ -646,17 +789,31 @@ function applyBrandState(b) {
     } catch(e) {}
   }
 
-  // Branding — try localStorage first, then IndexedDB fallback
+  // Branding (Multi-Profile) — try new format first, then migrate legacy
   let brandLoaded = false;
   try {
-    const b = JSON.parse(localStorage.getItem('rig_brand') || '{}');
-    brandLoaded = applyBrandState(b);
+    const data = JSON.parse(localStorage.getItem('rig_brands') || '{}');
+    brandLoaded = applyBrandsState(data);
   } catch(e) {}
 
   if (!brandLoaded) {
     try {
+      const data = await persistLoad('rig_brands');
+      brandLoaded = applyBrandsState(data);
+    } catch(e) {}
+  }
+
+  // Legacy migration: old single-brand format
+  if (!brandLoaded) {
+    try {
+      const b = JSON.parse(localStorage.getItem('rig_brand') || '{}');
+      brandLoaded = migrateLegacyBrand(b);
+    } catch(e) {}
+  }
+  if (!brandLoaded) {
+    try {
       const b = await persistLoad('rig_brand');
-      brandLoaded = applyBrandState(b);
+      brandLoaded = migrateLegacyBrand(b);
     } catch(e) {}
   }
 

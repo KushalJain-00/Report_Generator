@@ -135,7 +135,12 @@
       <div class="stat-box"><div class="stat-num warn" id="cnt-gen">0</div><div class="stat-lbl">In Progress</div></div>
       <div class="stat-box"><div class="stat-num dim" id="cnt-left">—</div><div class="stat-lbl">Remaining</div></div>
     </div>
-    <div class="live-stream-box" style="margin-top:16px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:16px;height:250px;overflow-y:auto;text-align:left;font-size:13px;line-height:1.5;color:var(--white);">
+    <div class="stats-row" style="margin-bottom:16px">
+      <div class="stat-box"><div class="stat-num" id="tok-in" style="font-size:22px">0</div><div class="stat-lbl">Input Tokens</div></div>
+      <div class="stat-box"><div class="stat-num" id="tok-out" style="font-size:22px;color:var(--cyan)">0</div><div class="stat-lbl">Output Tokens</div></div>
+      <div class="stat-box"><div class="stat-num" id="tok-total" style="font-size:22px;color:var(--warn)">0</div><div class="stat-lbl">Total Tokens</div></div>
+    </div>
+    <div class="live-stream-box" style="margin-top:0;background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:16px;height:250px;overflow-y:auto;text-align:left;font-size:13px;line-height:1.5;color:var(--white);">
       <div id="live-stream-content" style="color:var(--dim);font-family:sans-serif;">Waiting for AI...</div>
     </div>
     <div class="gen-grid" id="gen-grid" style="margin-top:16px;"></div>
@@ -156,10 +161,13 @@
         </button>
       </div>
     </div>
-    <div class="stats-row">
+    <div class="stats-row" style="grid-template-columns:repeat(6,1fr)">
       <div class="stat-box"><div class="stat-num" id="r-docs">0</div><div class="stat-lbl">Documents</div></div>
       <div class="stat-box"><div class="stat-num" id="r-words">—</div><div class="stat-lbl">Est. Words</div></div>
       <div class="stat-box"><div class="stat-num" id="r-time">—</div><div class="stat-lbl">Gen Time</div></div>
+      <div class="stat-box"><div class="stat-num" id="r-tok-in" style="font-size:22px">0</div><div class="stat-lbl">Input Tokens</div></div>
+      <div class="stat-box"><div class="stat-num" id="r-tok-out" style="font-size:22px;color:var(--cyan)">0</div><div class="stat-lbl">Output Tokens</div></div>
+      <div class="stat-box"><div class="stat-num" id="r-tok-total" style="font-size:22px;color:var(--warn)">0</div><div class="stat-lbl">Total Tokens</div></div>
     </div>
     <div class="final-grid" id="final-grid"></div>
     <div class="preview-panel">
@@ -211,10 +219,23 @@
 <div class="overlay" id="brand-overlay" onclick="handleOv(event,'brand-overlay',closeBrand)">
   <div class="modal modal-brand">
     <div class="modal-head">
-      <div><h3>Company Branding</h3><p>All generated documents will include your branding and appear as proprietary company documents.</p></div>
+      <div><h3 id="brand-modal-title">Company Branding</h3><p id="brand-modal-sub">Manage your branding profiles. Select one to use in generated documents.</p></div>
       <button class="modal-x" onclick="closeBrand()">✕</button>
     </div>
-    <div class="modal-body">
+
+    <!-- BRAND LIST VIEW -->
+    <div class="modal-body" id="brand-list-view">
+      <div id="brand-profiles-list"></div>
+      <button class="btn btn-lime btn-full" onclick="showBrandForm(-1)" style="margin-top:14px">
+        + Add New Branding Profile
+      </button>
+    </div>
+    <div class="modal-foot" id="brand-list-foot">
+      <button class="btn btn-ghost" onclick="closeBrand()" style="flex:1;justify-content:center">Close</button>
+    </div>
+
+    <!-- BRAND EDIT FORM VIEW -->
+    <div class="modal-body" id="brand-form-view" style="display:none">
       <!-- Logo -->
       <div class="sect-label">Company Logo</div>
       <label class="brand-logo-upload" id="logo-upload-label">
@@ -228,7 +249,7 @@
       <!-- Company Info -->
       <div class="sect-label">Company Information</div>
       <div class="brand-fg">
-        <div class="field"><label>Company Name</label><input type="text" id="b-cname" placeholder="e.g. AquaTech Solutions Pvt. Ltd."></div>
+        <div class="field"><label>Company Name *</label><input type="text" id="b-cname" placeholder="e.g. AquaTech Solutions Pvt. Ltd."></div>
         <div class="field"><label>Company Email</label><input type="email" id="b-email" placeholder="e.g. info@aquatech.in"></div>
         <div class="field"><label>Phone / WhatsApp</label><input type="text" id="b-phone" placeholder="e.g. +91 98765 43210"></div>
         <div class="field"><label>Website</label><input type="text" id="b-web" placeholder="e.g. www.aquatech.in"></div>
@@ -249,8 +270,8 @@
         </select>
       </div>
     </div>
-    <div class="modal-foot">
-      <button class="btn btn-ghost" onclick="closeBrand()" style="flex:1;justify-content:center">Cancel</button>
+    <div class="modal-foot" id="brand-form-foot" style="display:none">
+      <button class="btn btn-ghost" onclick="showBrandList()" style="flex:1;justify-content:center">← Back</button>
       <button class="btn btn-cyan" onclick="saveBrand()" style="flex:2;justify-content:center">Save Branding</button>
     </div>
   </div>
