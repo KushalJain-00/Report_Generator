@@ -175,36 +175,70 @@ async function startGen(){
   document.getElementById('cnt-left').textContent=toGen.length;document.getElementById('cnt-done').textContent=0;document.getElementById('cnt-gen').textContent=0;
   updateTokenUI();
   goTo(3);
-  let done=0;
-  for(let i=0;i<toGen.length;i++){
-    const doc=toGen[i],card=document.getElementById(`gc-${doc.id}`),stat=document.getElementById(`gs-${doc.id}`);
+  
+  const CONCURRENCY_LIMIT = 3;
+  let queue = [...toGen];
+  let doneCount = 0;
+  let inProgress = 0;
+  let activeStreams = new Set();
+  
+  const processDocument = async (doc) => {
+    inProgress++;
+    const card=document.getElementById(`gc-${doc.id}`),stat=document.getElementById(`gs-${doc.id}`);
     card?.classList.add('generating');if(stat){stat.className='gc-status s-gen';stat.textContent='gen';}
+    
     document.getElementById('prog-lbl').textContent=`${doc.icon} ${doc.name}`;
     document.getElementById('prog-cur').textContent=doc.tip;
-    document.getElementById('cnt-gen').textContent=1;
-    document.getElementById('cnt-left').textContent=toGen.length-i-1;
-    try{
-      S.generated[doc.id]=await callAI(doc, 1, (chunk) => {
-        document.getElementById('live-stream-content').innerHTML = marked.parse(chunk) + '<span class="cursor" style="opacity:0.5">|</span>';
-        const lb = document.querySelector('.live-stream-box');
-        if(lb) lb.scrollTop = lb.scrollHeight;
+    document.getElementById('cnt-gen').textContent=inProgress;
+    document.getElementById('cnt-left').textContent=toGen.length-doneCount-inProgress;
+    
+    const isPrimaryStream = activeStreams.size === 0;
+    activeStreams.add(doc.id);
+    if(isPrimaryStream) {
+      document.getElementById('live-stream-content').innerHTML = '<i>Initializing stream...</i>';
+    }
+
+    try {
+      S.generated[doc.id] = await callAI(doc, 1, (chunk) => {
+        if(isPrimaryStream) {
+          document.getElementById('live-stream-content').innerHTML = marked.parse(chunk) + '<span class="cursor" style="opacity:0.5">|</span>';
+          const lb = document.querySelector('.live-stream-box');
+          if(lb) lb.scrollTop = lb.scrollHeight;
+        }
       });
-      done++;
       card?.classList.remove('generating');card?.classList.add('done');
       if(stat){stat.className='gc-status s-done';stat.textContent='done';}
-    }catch(e){
-      S.generated[doc.id]=`[Generation error]\n\n${e.message}`;done++;
+    } catch(e) {
+      S.generated[doc.id]=`[Generation error]\n\n${e.message}`;
       card?.classList.remove('generating');card?.classList.add('error');
       if(stat){stat.className='gc-status s-err';stat.textContent='err';}
     }
+    
+    inProgress--;
+    doneCount++;
+    activeStreams.delete(doc.id);
+    
     updateTokenUI();
-    document.getElementById('cnt-done').textContent=done;
-    document.getElementById('cnt-gen').textContent=0;
-    const pct=Math.round(((i+1)/toGen.length)*100);
+    document.getElementById('cnt-done').textContent=doneCount;
+    document.getElementById('cnt-gen').textContent=inProgress;
+    
+    const pct=Math.round((doneCount/toGen.length)*100);
     document.getElementById('prog-fill').style.width=pct+'%';
     document.getElementById('prog-pct').textContent=pct+'%';
-    if(i<toGen.length-1) await new Promise(res=>setTimeout(res, 4000));
+  };
+
+  const workers = [];
+  for(let i=0; i<Math.min(CONCURRENCY_LIMIT, queue.length); i++) {
+    workers.push((async () => {
+      while(queue.length > 0) {
+        const doc = queue.shift();
+        await processDocument(doc);
+      }
+    })());
   }
+  
+  await Promise.all(workers);
+
   document.getElementById('prog-lbl').textContent='Generation Complete!';
   document.getElementById('prog-cur').textContent='All documents ready — preparing results...';
   setTimeout(()=>showResults(toGen),800);
@@ -243,7 +277,6 @@ async function callAI(doc, attempt=1, onChunk=null){
     }else throw new Error('Unknown provider');
 
     const r=await fetch(url,{method:'POST',headers,body});
-    if(r.status===429 && attempt<3) throw new Error('RETRY_429');
     if(!r.ok){
       const e=await r.json().catch(()=>({}));
       let msg=e.error?.message||`HTTP ${r.status}`;
@@ -294,9 +327,13 @@ async function callAI(doc, attempt=1, onChunk=null){
     S.tokenUsage.total = S.tokenUsage.input + S.tokenUsage.output;
     return content;
   } catch(err) {
-    if(err.message==='RETRY_429' && attempt<3){
-      document.getElementById('prog-cur').textContent=`Rate limited (429). Retrying in 10s... (Attempt ${attempt}/3)`;
-      await new Promise(r=>setTimeout(r, 10000));
+    const errStr = err.message.toLowerCase();
+    const isAuthError = errStr.includes('401') || errStr.includes('403') || errStr.includes('invalid api key') || errStr.includes('unauthorized');
+    if (!isAuthError && attempt < 5) {
+      const waitTime = Math.pow(2, attempt) * 2000 + Math.random() * 1000; // Exponential backoff: ~4s, 8s, 16s, 32s + jitter
+      console.warn(`[RIG] API Error generating ${doc.id}: ${err.message}. Retrying in ${Math.round(waitTime/1000)}s... (Attempt ${attempt}/5)`);
+      document.getElementById('prog-cur').textContent=`Error: Retrying in ${Math.round(waitTime/1000)}s... (Attempt ${attempt}/5)`;
+      await new Promise(r=>setTimeout(r, waitTime));
       document.getElementById('prog-cur').textContent=doc.tip;
       return callAI(doc, attempt+1, onChunk);
     }

@@ -1,0 +1,222 @@
+// ── MAIN APP LOGIC ────────────────────────────────────────────────
+document.getElementById('f-reference')?.addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) { S.referenceText = ''; document.getElementById('ref-status').textContent = ''; return; }
+  document.getElementById('ref-status').textContent = 'Reading...';
+  try {
+    const text = await file.text();
+    S.referenceText = text;
+    document.getElementById('ref-status').textContent = `Loaded (${Math.round(text.length/1024)}kb)`;
+  } catch(err) {
+    document.getElementById('ref-status').textContent = 'Error reading file';
+    S.referenceText = '';
+  }
+});
+
+document.getElementById('btn-to-docs').onclick=()=>{
+  const name=document.getElementById('f-name').value.trim();
+  if(!name){document.getElementById('f-name').classList.add('err');showToast('Please enter a service / report name','err');return;}
+  document.getElementById('f-name').classList.remove('err');
+  if(!S.apiQueue || S.apiQueue.length === 0){showToast('Please configure at least one API key first','err');openApi();return;}
+  S.project={name,sector:document.getElementById('f-sector').value,geo:document.getElementById('f-geo').value,client:document.getElementById('f-client').value,audience:document.getElementById('f-audience').value,desc:document.getElementById('f-desc').value,standards:document.getElementById('f-standards').value,price:document.getElementById('f-price').value,duration:document.getElementById('f-duration').value,lang:document.getElementById('f-lang').value, referenceText: S.referenceText};
+  renderDocGrid();goTo(2);
+};
+
+// ── GENERATION QUEUE ──────────────────────────────────────────────
+async function startGen(restoreDraft = false){
+  if(S.selected.size===0){showToast('Select at least one document','err');return;}
+  
+  if (!restoreDraft) {
+    S.generated={};
+    S.startTime=Date.now();
+    S.tokenUsage={input:0,output:0,total:0};
+  }
+  
+  const toGen=DOCS.filter(d=>S.selected.has(d.id));
+  document.getElementById('gen-grid').innerHTML=toGen.map(d=>{
+    const status = S.generated[d.id] ? (S.generated[d.id].startsWith('[Generation error') ? 'err' : 'done') : 'wait';
+    return `<div class="gc ${status==='done'?'done':(status==='err'?'error':'')}" id="gc-${d.id}"><div class="gc-status s-${status}" id="gs-${d.id}">${status}</div><div class="gc-icon">${d.icon}</div><div class="gc-name">${d.name}</div></div>`
+  }).join('');
+  
+  updateTokenUI();
+  goTo(3);
+  
+  const CONCURRENCY_LIMIT = 3;
+  let queue = toGen.filter(d => !S.generated[d.id] || S.generated[d.id].startsWith('[Generation error'));
+  let doneCount = toGen.length - queue.length;
+  let inProgress = 0;
+  let activeStreams = new Set();
+  
+  document.getElementById('cnt-left').textContent=queue.length;
+  document.getElementById('cnt-done').textContent=doneCount;
+  document.getElementById('cnt-gen').textContent=0;
+  
+  const processDocument = async (doc) => {
+    inProgress++;
+    const card=document.getElementById(`gc-${doc.id}`),stat=document.getElementById(`gs-${doc.id}`);
+    card?.classList.remove('error');
+    card?.classList.add('generating');if(stat){stat.className='gc-status s-gen';stat.textContent='gen';}
+    
+    document.getElementById('prog-lbl').textContent=`${doc.icon} ${doc.name}`;
+    document.getElementById('prog-cur').textContent=doc.tip;
+    document.getElementById('cnt-gen').textContent=inProgress;
+    document.getElementById('cnt-left').textContent=toGen.length-doneCount-inProgress;
+    
+    const isPrimaryStream = activeStreams.size === 0;
+    activeStreams.add(doc.id);
+    if(isPrimaryStream) {
+      document.getElementById('live-stream-content').innerHTML = '<i>Initializing stream...</i>';
+    }
+
+    try {
+      S.generated[doc.id] = await callAI(doc, 0, 1, (chunk) => {
+        if(isPrimaryStream) {
+          document.getElementById('live-stream-content').innerHTML = marked.parse(chunk) + '<span class="cursor" style="opacity:0.5">|</span>';
+          const lb = document.querySelector('.live-stream-box');
+          if(lb) lb.scrollTop = lb.scrollHeight;
+        }
+      });
+      card?.classList.remove('generating');card?.classList.add('done');
+      if(stat){stat.className='gc-status s-done';stat.textContent='done';}
+    } catch(e) {
+      S.generated[doc.id]=`[Generation error]\n\n${e.message}`;
+      card?.classList.remove('generating');card?.classList.add('error');
+      if(stat){stat.className='gc-status s-err';stat.textContent='err';}
+    }
+    
+    inProgress--;
+    doneCount++;
+    activeStreams.delete(doc.id);
+    
+    // Auto-Save Draft to IndexedDB
+    persistSave('rig_drafts', { project: S.project, generated: S.generated, tokenUsage: S.tokenUsage });
+    
+    updateTokenUI();
+    document.getElementById('cnt-done').textContent=doneCount;
+    document.getElementById('cnt-gen').textContent=inProgress;
+    
+    const pct=Math.round((doneCount/toGen.length)*100);
+    document.getElementById('prog-fill').style.width=pct+'%';
+    document.getElementById('prog-pct').textContent=pct+'%';
+  };
+
+  const workers = [];
+  for(let i=0; i<Math.min(CONCURRENCY_LIMIT, queue.length); i++) {
+    workers.push((async () => {
+      while(queue.length > 0) {
+        const doc = queue.shift();
+        await processDocument(doc);
+      }
+    })());
+  }
+  
+  await Promise.all(workers);
+
+  document.getElementById('prog-lbl').textContent='Generation Complete!';
+  document.getElementById('prog-cur').textContent='All documents ready — preparing results...';
+  setTimeout(()=>showResults(toGen),800);
+}
+
+function restart(){
+    S.generated={};
+    S.selected=new Set(DOCS.map(d=>d.id));
+    S.project={};
+    S.referenceText='';
+    S.tokenUsage={input:0,output:0,total:0};
+    idbDelete('rig_drafts').catch(()=>{}); // clear drafts
+    document.getElementById('ref-status').textContent='';
+    if(document.getElementById('f-reference'))document.getElementById('f-reference').value='';
+    document.querySelectorAll('#view-form input,#view-form textarea').forEach(el=>el.value='');
+    document.getElementById('f-lang').value='English';
+    goTo(1);
+}
+
+// ── INIT ──────────────────────────────────────────────────────────
+function applyApiState(a) {
+  if (a && a.length > 0) {
+    S.apiQueue = a;
+    updateApiTopbar();
+    return true;
+  }
+  return false;
+}
+
+function applyBrandsState(data) {
+  if (data && data.profiles && data.profiles.length > 0) {
+    S.brandProfiles = data.profiles;
+    S.activeBrandIdx = data.activeIdx >= 0 && data.activeIdx < data.profiles.length ? data.activeIdx : 0;
+    S.brand = {...S.brandProfiles[S.activeBrandIdx]};
+    updateBrandTopbar();
+    return true;
+  }
+  return false;
+}
+
+(async function init(){
+  // Theme
+  try {
+    if (localStorage.getItem('rig_theme') === 'light') {
+      document.body.classList.add('light-theme');
+      const ti = document.getElementById('theme-icon');
+      if (ti) ti.textContent = '🌙';
+    }
+  } catch(e) {}
+
+  // API Queue
+  let apiLoaded = false;
+  try {
+    const a = await persistLoad('rig_api_queue');
+    if (a && a.length) { apiLoaded = applyApiState(a); }
+    else {
+        // Migration from old single API format
+        const oldApi = await persistLoad('rig_api');
+        if (oldApi && oldApi.key) {
+            S.apiQueue = [oldApi];
+            persistSave('rig_api_queue', S.apiQueue);
+            apiLoaded = applyApiState(S.apiQueue);
+        }
+    }
+  } catch(e) {}
+
+  // Branding (Multi-Profile)
+  try {
+    const data = await persistLoad('rig_brands');
+    if (data) { applyBrandsState(data); }
+  } catch(e) {}
+
+  // Prompts
+  try {
+      const p = await persistLoad('rig_prompts');
+      if (p && p.systemPersona) {
+          S.prompts = p;
+      }
+  } catch(e) {}
+
+  renderDocGrid();
+  
+  // Drafts
+  try {
+      const draft = await persistLoad('rig_drafts');
+      if (draft && draft.generated && Object.keys(draft.generated).length > 0) {
+          if (confirm("You have a previously unsaved session. Would you like to restore it?")) {
+              S.project = draft.project || {};
+              S.generated = draft.generated;
+              S.tokenUsage = draft.tokenUsage || {input:0,output:0,total:0};
+              
+              // Pre-fill fields
+              ['name','sector','geo','client','audience','desc','standards','price','duration','lang'].forEach(k=>{
+                 const el = document.getElementById(`f-${k}`);
+                 if (el && S.project[k]) el.value = S.project[k];
+              });
+              
+              // Select the generated docs
+              S.selected = new Set(Object.keys(S.generated));
+              renderDocGrid();
+              showResults(DOCS.filter(d=>S.selected.has(d.id)));
+          } else {
+              idbDelete('rig_drafts').catch(()=>{});
+          }
+      }
+  } catch(e) {}
+
+})();

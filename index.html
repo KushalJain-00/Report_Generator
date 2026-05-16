@@ -10,6 +10,9 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <script src="https://unpkg.com/html-docx-js/dist/html-docx.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/easymde/dist/easymde.min.css">
+<script src="https://unpkg.com/easymde/dist/easymde.min.js"></script>
 <link rel="stylesheet" href="assets/css/index.css">
 </head>
 <body>
@@ -27,6 +30,9 @@
   <div class="topbar-right">
     <button class="tbtn" id="btn-theme" onclick="toggleTheme()" style="padding: 7px 10px;" title="Toggle Light/Dark Theme">
       <span id="theme-icon" style="font-size:14px;line-height:1;">☀️</span>
+    </button>
+    <button class="tbtn" onclick="openSettings()" style="padding: 7px 10px;" title="Settings">
+      <span style="font-size:14px;line-height:1;">⚙️</span>
     </button>
     <button class="tbtn" id="btn-brand-open" onclick="openBrand()">
       <span class="tdot" id="brand-dot"></span>
@@ -155,6 +161,10 @@
       </div>
       <div class="dl-actions">
         <button class="btn btn-ghost" onclick="restart()">New Package</button>
+        <button class="btn btn-ghost" onclick="downloadPdf()" id="btn-pdf" style="color:var(--white);">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+          Download PDF
+        </button>
         <button class="btn btn-cyan" onclick="downloadZip()" id="btn-zip">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           Download ZIP
@@ -189,28 +199,60 @@
 <div class="overlay" id="api-overlay" onclick="handleOv(event,'api-overlay',closeApi)">
   <div class="modal modal-api">
     <div class="modal-head">
-      <div><h3>Configure AI Provider</h3><p>Key stored only in your browser — never sent to our servers.</p></div>
+      <div><h3>Configure API Fallbacks</h3><p>Set multiple providers. If the primary fails, RIG falls back to the next.</p></div>
       <button class="modal-x" onclick="closeApi()">✕</button>
     </div>
-    <div class="modal-body">
-      <div class="ptabs" id="ptabs">
-        <span class="ptab active" data-p="anthropic" onclick="switchProv(this,'anthropic')">Anthropic (Claude)</span>
-        <span class="ptab" data-p="openai" onclick="switchProv(this,'openai')">OpenAI (GPT)</span>
-        <span class="ptab" data-p="gemini" onclick="switchProv(this,'gemini')">Google (Gemini)</span>
-        <span class="ptab" data-p="openrouter" onclick="switchProv(this,'openrouter')">OpenRouter</span>
-        <span class="ptab" data-p="groq" onclick="switchProv(this,'groq')">Groq</span>
+    <div class="modal-body" style="padding-bottom:10px">
+      <!-- Queue list card -->
+      <div style="background:var(--ink3);border:1px solid var(--wire);border-radius:var(--r12);padding:14px;margin-bottom:14px">
+        <div style="font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:10px;font-weight:500">Fallback Queue</div>
+        <div id="api-queue-list" style="max-height:200px;overflow-y:auto"></div>
       </div>
-      <div id="api-status-box"></div>
-      <div class="api-wrap">
-        <input type="password" id="api-key-inp" placeholder="Paste your API key..." oninput="document.getElementById('api-status-box').innerHTML=''">
-        <button class="eye" onclick="toggleEye()" id="eye-btn">👁</button>
+      <!-- Add provider card -->
+      <div style="background:var(--ink3);border:1px solid var(--wire);border-radius:var(--r12);padding:14px">
+        <div style="font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:10px;font-weight:500">Add Provider</div>
+        <div class="ptabs" id="ptabs" style="margin-bottom:12px">
+          <span class="ptab active" data-p="anthropic" onclick="switchProv(this,'anthropic')">Anthropic</span>
+          <span class="ptab" data-p="openai" onclick="switchProv(this,'openai')">OpenAI</span>
+          <span class="ptab" data-p="gemini" onclick="switchProv(this,'gemini')">Gemini</span>
+          <span class="ptab" data-p="openrouter" onclick="switchProv(this,'openrouter')">OpenRouter</span>
+          <span class="ptab" data-p="groq" onclick="switchProv(this,'groq')">Groq</span>
+        </div>
+        <div class="api-wrap" style="margin-bottom:10px">
+          <input type="password" id="api-key-inp" placeholder="Paste your API key...">
+          <button class="eye" onclick="toggleEye()" id="eye-btn">👁</button>
+        </div>
+        <div class="model-row" style="margin-bottom:10px"><label>Model</label><select id="model-sel"></select></div>
+        <div class="api-note" id="api-note" style="margin-bottom:12px"></div>
+        <button class="btn btn-cyan btn-full" onclick="addApiToQueue()">+ Add to Queue</button>
       </div>
-      <div class="model-row"><label>Model</label><select id="model-sel"></select></div>
-      <div class="api-note" id="api-note"></div>
     </div>
     <div class="modal-foot">
-      <button class="btn btn-ghost" onclick="closeApi()" style="flex:1;justify-content:center">Cancel</button>
-      <button class="btn btn-lime" onclick="saveApi()" style="flex:2;justify-content:center">Save &amp; Connect</button>
+      <button class="btn btn-lime" onclick="closeApi()" style="flex:1;justify-content:center">Done</button>
+    </div>
+  </div>
+</div>
+
+<!-- SETTINGS MODAL -->
+<div class="overlay" id="settings-overlay" onclick="handleOv(event,'settings-overlay',closeSettings)">
+  <div class="modal modal-brand">
+    <div class="modal-head">
+      <div><h3>Prompt Settings</h3><p>Override the default AI instructions and behavior.</p></div>
+      <button class="modal-x" onclick="closeSettings()">✕</button>
+    </div>
+    <div class="modal-body" style="padding-top:26px;padding-bottom:10px">
+      <div class="field fc" style="margin-bottom:22px">
+        <label style="margin-bottom:8px">System Persona</label>
+        <textarea id="s-persona" style="min-height:120px;line-height:1.7"></textarea>
+      </div>
+      <div class="field fc" style="margin-bottom:10px">
+        <label style="margin-bottom:8px">Output Directives</label>
+        <textarea id="s-directives" style="min-height:170px;line-height:1.7"></textarea>
+      </div>
+    </div>
+    <div class="modal-foot" style="padding-top:14px">
+      <button class="btn btn-ghost" onclick="closeSettings()" style="flex:1;justify-content:center">Cancel</button>
+      <button class="btn btn-cyan" onclick="saveSettings()" style="flex:2;justify-content:center">Save Settings</button>
     </div>
   </div>
 </div>
@@ -279,6 +321,11 @@
 
 <div class="toast" id="toast"><span class="t-icon" id="t-icon">✓</span><span id="t-msg"></span></div>
 
-<script src="assets/js/index.js"></script>
+<script src="assets/js/store.js"></script>
+<script src="assets/js/prompts.js"></script>
+<script src="assets/js/api.js"></script>
+<script src="assets/js/export.js"></script>
+<script src="assets/js/ui.js"></script>
+<script src="assets/js/main.js"></script>
 </body>
 </html>
