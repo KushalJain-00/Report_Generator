@@ -22,15 +22,26 @@ document.getElementById('btn-to-docs').onclick=()=>{
   renderDocGrid();goTo(2);
 };
 
-// ── GENERATION QUEUE ──────────────────────────────────────────────
+function cancelGen() {
+  if (S.genController) {
+    S.genController.abort();
+    document.getElementById('prog-cur').textContent = 'Generation cancelled by user.';
+    document.getElementById('btn-cancel-gen').style.display = 'none';
+  }
+}
+
 async function startGen(restoreDraft = false){
   if(S.selected.size===0){showToast('Select at least one document','err');return;}
   
   if (!restoreDraft) {
     S.generated={};
+    S.summaries={};
     S.startTime=Date.now();
     S.tokenUsage={input:0,output:0,total:0};
   }
+  
+  S.genController = new AbortController();
+  document.getElementById('btn-cancel-gen').style.display = 'flex';
   
   const toGen=DOCS.filter(d=>S.selected.has(d.id));
   document.getElementById('gen-grid').innerHTML=toGen.map(d=>{
@@ -41,17 +52,17 @@ async function startGen(restoreDraft = false){
   updateTokenUI();
   goTo(3);
   
-  const CONCURRENCY_LIMIT = 3;
+  const CONCURRENCY_LIMIT = 1; // Enforced sequential generation for contextual memory
   let queue = toGen.filter(d => !S.generated[d.id] || S.generated[d.id].startsWith('[Generation error'));
   let doneCount = toGen.length - queue.length;
   let inProgress = 0;
-  let activeStreams = new Set();
   
   document.getElementById('cnt-left').textContent=queue.length;
   document.getElementById('cnt-done').textContent=doneCount;
   document.getElementById('cnt-gen').textContent=0;
   
   const processDocument = async (doc) => {
+    if (S.genController.signal.aborted) return;
     inProgress++;
     const card=document.getElementById(`gc-${doc.id}`),stat=document.getElementById(`gs-${doc.id}`);
     card?.classList.remove('error');
@@ -62,34 +73,50 @@ async function startGen(restoreDraft = false){
     document.getElementById('cnt-gen').textContent=inProgress;
     document.getElementById('cnt-left').textContent=toGen.length-doneCount-inProgress;
     
-    const isPrimaryStream = activeStreams.size === 0;
-    activeStreams.add(doc.id);
-    if(isPrimaryStream) {
-      document.getElementById('live-stream-content').innerHTML = '<i>Initializing stream...</i>';
+    // Cross-document Context (Summaries only)
+    let contextData = '';
+    const doneKeys = Object.keys(S.summaries || {});
+    if (doneKeys.length > 0) {
+      doneKeys.forEach(k => {
+         const docObj = DOCS.find(d=>d.id===k);
+         if(docObj) contextData += `\n[Document: ${docObj.name}]\n${S.summaries[k]}\n`;
+      });
     }
 
     try {
-      S.generated[doc.id] = await callAI(doc, 0, 1, (chunk) => {
-        if(isPrimaryStream) {
-          document.getElementById('live-stream-content').innerHTML = marked.parse(chunk) + '<span class="cursor" style="opacity:0.5">|</span>';
-          const lb = document.querySelector('.live-stream-box');
-          if(lb) lb.scrollTop = lb.scrollHeight;
-        }
-      });
+      let rawText = await callAI(doc, 0, 1, null, "", false, S.genController.signal, contextData);
+      
+      let finalText = rawText;
+      let summary = "";
+      if (rawText.includes("---DOC_SUMMARY---")) {
+          const parts = rawText.split("---DOC_SUMMARY---");
+          finalText = parts[0].trim();
+          summary = parts[1] ? parts[1].trim() : "";
+      } else {
+          // Fallback if AI disobeys instruction
+          summary = rawText.substring(0, 400) + "... (No summary provided by AI)";
+      }
+      
+      S.generated[doc.id] = finalText;
+      S.summaries = S.summaries || {};
+      S.summaries[doc.id] = summary;
+      
       card?.classList.remove('generating');card?.classList.add('done');
       if(stat){stat.className='gc-status s-done';stat.textContent='done';}
     } catch(e) {
-      S.generated[doc.id]=`[Generation error]\n\n${e.message}`;
+      if (e.name === 'AbortError' || e.message.includes('TIMEOUT')) {
+         S.generated[doc.id] = `[Generation error]\n\nCancelled / Timeout`;
+      } else {
+         S.generated[doc.id]=`[Generation error]\n\n${e.message}`;
+      }
       card?.classList.remove('generating');card?.classList.add('error');
       if(stat){stat.className='gc-status s-err';stat.textContent='err';}
     }
     
     inProgress--;
     doneCount++;
-    activeStreams.delete(doc.id);
     
-    // Auto-Save Draft to IndexedDB
-    persistSave('rig_drafts', { project: S.project, generated: S.generated, tokenUsage: S.tokenUsage });
+    persistSave('rig_drafts', { project: S.project, generated: S.generated, summaries: S.summaries, tokenUsage: S.tokenUsage });
     
     updateTokenUI();
     document.getElementById('cnt-done').textContent=doneCount;
@@ -103,7 +130,7 @@ async function startGen(restoreDraft = false){
   const workers = [];
   for(let i=0; i<Math.min(CONCURRENCY_LIMIT, queue.length); i++) {
     workers.push((async () => {
-      while(queue.length > 0) {
+      while(queue.length > 0 && !S.genController.signal.aborted) {
         const doc = queue.shift();
         await processDocument(doc);
       }
@@ -112,6 +139,12 @@ async function startGen(restoreDraft = false){
   
   await Promise.all(workers);
 
+  if (S.genController.signal.aborted) {
+    document.getElementById('prog-cur').textContent='Generation cancelled. Drafts saved.';
+    return;
+  }
+
+  document.getElementById('btn-cancel-gen').style.display = 'none';
   document.getElementById('prog-lbl').textContent='Generation Complete!';
   document.getElementById('prog-cur').textContent='All documents ready — preparing results...';
   setTimeout(()=>showResults(toGen),800);
@@ -119,6 +152,7 @@ async function startGen(restoreDraft = false){
 
 function restart(){
     S.generated={};
+    S.summaries={};
     S.selected=new Set(DOCS.map(d=>d.id));
     S.project={};
     S.referenceText='';
@@ -188,7 +222,12 @@ function applyBrandsState(data) {
   try {
       const p = await persistLoad('rig_prompts');
       if (p && p.systemPersona) {
-          S.prompts = p;
+          if (!p.outputDirectives.includes('Mermaid.js')) {
+             // Force migration to new rich content prompts
+             persistSave('rig_prompts', S.prompts);
+          } else {
+             S.prompts = p;
+          }
       }
   } catch(e) {}
 
@@ -201,6 +240,7 @@ function applyBrandsState(data) {
           if (confirm("You have a previously unsaved session. Would you like to restore it?")) {
               S.project = draft.project || {};
               S.generated = draft.generated;
+              S.summaries = draft.summaries || {};
               S.tokenUsage = draft.tokenUsage || {input:0,output:0,total:0};
               
               // Pre-fill fields

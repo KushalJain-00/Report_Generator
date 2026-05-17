@@ -65,9 +65,11 @@ const S={
     outputDirectives: `--- OUTPUT DIRECTIVES ---
 1. Language: Strictly write in {lang}.
 2. Formatting: Use extremely well-structured Markdown. Use clear, hierarchical headings (H1, H2, H3), bullet points, and bold text for emphasis.
-3. Tables: Use proper Markdown tables extensively (with | Column | Column | syntax). NEVER use code-blocks, ASCII art, or plain text for tables. Always ensure tables have a clear header row and data rows. The layout must be ready to render beautifully into a Word document.
-4. Professionalism: Maintain a formal, authoritative, and consultative tone. Avoid generic AI introductory or concluding remarks. Start immediately with the document content.
-5. Detail Level: Maximize depth. Do not use placeholders like "[Insert Date]". Instead, generate highly realistic, hypothetical data, timelines, or scenarios that perfectly match the project context if exact data is missing.`
+3. Tables & Data: Use proper Markdown tables extensively (with | Column | Column | syntax). EVERY document must contain detailed tables with rich, researched data points (metrics, costs, percentages, dates, etc). NEVER use ASCII art for tables.
+4. Diagrams & Graphs: Use Mermaid.js (fenced code block with \`\`\`mermaid) to generate relevant diagrams (flowcharts, Gantt charts, pie charts, or mindmaps) to visualize complex information where needed.
+5. Professionalism: Maintain a formal, authoritative, and consultative tone. Avoid generic AI introductory or concluding remarks. Start immediately with the document content.
+6. Detail Level & Deep Research: Maximize depth. Write extremely content-rich, long-form sections. Do not use placeholders like "[Insert Date]". Generate highly realistic, meticulously researched hypothetical data, technical details, timelines, and quantitative metrics that perfectly match the project context.
+7. Hidden Memory Summary: At the very end of your response, you MUST append a new section starting exactly with the exact text "---DOC_SUMMARY---" on a new line, followed by a dense 3-4 sentence summary of the key facts, figures, and strategic decisions established in this document. This summary will be used as memory for future AI generation steps.`
   }
 };
 

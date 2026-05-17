@@ -1,14 +1,10 @@
 // ── API ENGINE ────────────────────────────────────────────────────
 function estimateTokens(text){ return Math.ceil((text||'').length / 4); }
 
-async function callAI(doc, apiIndex=0, attempt=1, onChunk=null, previousContent="", isContinuation=false){
+async function callAI(doc, apiIndex=0, attempt=1, onChunk=null, previousContent="", isContinuation=false, signal=null, contextData=""){
   if (!S.apiQueue || S.apiQueue.length === 0) {
-    // Fallback if queue is empty but single key exists
-    if (S.api && S.api.key) {
-      S.apiQueue = [S.api];
-    } else {
-      throw new Error("No API profiles configured in settings.");
-    }
+    if (S.api && S.api.key) { S.apiQueue = [S.api]; } 
+    else { throw new Error("No API profiles configured in settings."); }
   }
   
   if (apiIndex >= S.apiQueue.length) {
@@ -19,6 +15,9 @@ async function callAI(doc, apiIndex=0, attempt=1, onChunk=null, previousContent=
   const {provider:p, key, model} = apiConfig;
   
   let prompt = buildPrompt(doc, S.project, S.brand);
+  if (contextData) {
+    prompt += `\n\n--- PREVIOUS DOCUMENT CONTEXT ---\nTo maintain consistency across the entire report, here are summaries/snippets of previously generated documents in this package:\n${contextData}\nMake sure your new content aligns with these facts.`;
+  }
   if (isContinuation) {
     prompt += `\n\n--- CONTINUATION INSTRUCTION ---\nThe following is what you have generated so far. You hit the maximum token limit. Continue generating EXACTLY where you left off. Do not include introductory text, do not repeat what is already written. Just continue the next sentence.\n\n[PREVIOUS CONTENT]\n${previousContent}`;
   }
@@ -26,7 +25,24 @@ async function callAI(doc, apiIndex=0, attempt=1, onChunk=null, previousContent=
   const promptTokensEst = estimateTokens(prompt);
   let cutOff = false;
   
+  // AbortController logic for explicit timeout & user cancel
+  const localController = new AbortController();
+  const onAbort = () => localController.abort();
+  if (signal) {
+    if (signal.aborted) throw new Error('AbortError');
+    signal.addEventListener('abort', onAbort);
+  }
+  
+  let chunkTimeout;
+  const resetTimeout = () => {
+    clearTimeout(chunkTimeout);
+    chunkTimeout = setTimeout(() => {
+      localController.abort(new Error('TIMEOUT'));
+    }, 45000);
+  };
+  
   try {
+    resetTimeout();
     let url, headers, body;
     if(p==='anthropic'){
       url='https://api.anthropic.com/v1/messages';
@@ -36,12 +52,8 @@ async function callAI(doc, apiIndex=0, attempt=1, onChunk=null, previousContent=
       url=p==='openai'?'https://api.openai.com/v1/chat/completions':(p==='openrouter'?'https://openrouter.ai/api/v1/chat/completions':'https://api.groq.com/openai/v1/chat/completions');
       headers={'Content-Type':'application/json','Authorization':`Bearer ${key}`};
       if(p==='openrouter') headers['HTTP-Referer']='https://rig-app.com';
-      
-      // Handle OpenRouter multiple fallback models
       let selectedModel = model;
-      if (p==='openrouter' && model.includes(',')) {
-        selectedModel = model.split(',').map(m => m.trim()); // Array for OpenRouter auto fallback
-      }
+      if (p==='openrouter' && model.includes(',')) selectedModel = model.split(',').map(m => m.trim());
       body=JSON.stringify({model:selectedModel,max_tokens:4096,messages:[{role:'user',content:prompt}],stream:true,stream_options:{include_usage:true}});
     }else if(p==='gemini'){
       url=`https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${key}`;
@@ -49,8 +61,12 @@ async function callAI(doc, apiIndex=0, attempt=1, onChunk=null, previousContent=
       body=JSON.stringify({contents:[{parts:[{text:prompt}]}],generationConfig:{maxOutputTokens:4096}});
     }else throw new Error('Unknown provider');
 
-    const r=await fetch(url,{method:'POST',headers,body});
+    const r=await fetch(url,{method:'POST',headers,body,signal:localController.signal});
     if(!r.ok){
+      if(r.status === 429) {
+        const retryAfter = r.headers.get('retry-after');
+        if(retryAfter) throw new Error(`RATE_LIMIT:${retryAfter}`);
+      }
       const e=await r.json().catch(()=>({}));
       let msg=e.error?.message||`HTTP ${r.status}`;
       if(e.error?.metadata?.raw) msg+=`\nDetails: ${JSON.stringify(e.error.metadata.raw)}`;
@@ -63,6 +79,7 @@ async function callAI(doc, apiIndex=0, attempt=1, onChunk=null, previousContent=
     let tokIn = 0, tokOut = 0;
     
     while(true){
+      resetTimeout();
       const {done, value} = await reader.read();
       if(done) break;
       const chunk = decoder.decode(value, {stream: true});
@@ -74,12 +91,10 @@ async function callAI(doc, apiIndex=0, attempt=1, onChunk=null, previousContent=
             const data = JSON.parse(tline.slice(6));
             let textDelta = '';
             
-            // Detect token limits
             if(data.stop_reason === 'max_tokens' || data.message?.stop_reason === 'max_tokens') cutOff = true;
             if(data.choices?.[0]?.finish_reason === 'length') cutOff = true;
             if(data.candidates?.[0]?.finishReason === 'MAX_TOKENS') cutOff = true;
 
-            // Extract token usage and text
             if(p==='anthropic'){
               if(data.type==='content_block_delta') textDelta = data.delta?.text||'';
               if(data.type==='message_start' && data.message?.usage) tokIn = data.message.usage.input_tokens||0;
@@ -93,13 +108,15 @@ async function callAI(doc, apiIndex=0, attempt=1, onChunk=null, previousContent=
             }
             if(textDelta){
               content += textDelta;
-              if(onChunk) onChunk(previousContent + content);
+              if(onChunk) onChunk(previousContent + content, textDelta);
             }
           }catch(e){}
         }
       }
     }
-    // Fallback estimation
+    clearTimeout(chunkTimeout);
+    if(signal) signal.removeEventListener('abort', onAbort);
+    
     if(!tokIn) tokIn = promptTokensEst;
     if(!tokOut) tokOut = estimateTokens(content);
     S.tokenUsage.input += tokIn;
@@ -108,55 +125,57 @@ async function callAI(doc, apiIndex=0, attempt=1, onChunk=null, previousContent=
     
     const fullContent = previousContent + content;
     
-    // Auto Continuation if cut off
     if (cutOff) {
       console.warn(`[RIG] Token cut-off detected for ${doc.id}. Auto-continuing...`);
-      if (document.getElementById('prog-cur')) {
-         document.getElementById('prog-cur').textContent=`Hit max tokens. Auto-continuing document...`;
-      }
-      return await callAI(doc, apiIndex, 1, onChunk, fullContent, true);
+      if (document.getElementById('prog-cur')) document.getElementById('prog-cur').textContent=`Hit max tokens. Auto-continuing document...`;
+      return await callAI(doc, apiIndex, 1, onChunk, fullContent, true, signal, contextData);
     }
     
     return fullContent;
   } catch(err) {
-    const errStr = err.message.toLowerCase();
-    const isAuthError = errStr.includes('401') || errStr.includes('403') || errStr.includes('invalid api key') || errStr.includes('unauthorized') || errStr.includes('api_key');
+    clearTimeout(chunkTimeout);
+    if(signal) signal.removeEventListener('abort', onAbort);
     
+    const errStr = err.message.toLowerCase();
+    
+    // Check if user manually aborted
+    if (err.name === 'AbortError' || errStr.includes('aborterror')) {
+      throw err; // propagate up
+    }
+
+    const isAuthError = errStr.includes('401') || errStr.includes('403') || errStr.includes('invalid api key') || errStr.includes('unauthorized') || errStr.includes('api_key');
     const failedName = `${PROV[p]?.name||p} / ${model}`;
     
-    // Auth error -> Immediate Failover
     if (isAuthError) {
-      console.warn(`[RIG] Auth error on profile ${apiIndex}. Failing over to next profile.`);
       if (apiIndex + 1 < S.apiQueue.length) {
         const next = S.apiQueue[apiIndex + 1];
-        const nextName = `${PROV[next.provider]?.name||next.provider} / ${next.model}`;
-        showToast(`${failedName} failed (auth). Falling back to ${nextName}`, 'err');
-        if(document.getElementById('prog-cur')) document.getElementById('prog-cur').textContent=`Auth error on ${failedName}. Switching to ${nextName}...`;
+        showToast(`${failedName} failed (auth). Falling back...`, 'err');
+        return callAI(doc, apiIndex + 1, 1, onChunk, previousContent, isContinuation, signal, contextData);
       }
-      return callAI(doc, apiIndex + 1, 1, onChunk, previousContent, isContinuation);
+      return callAI(doc, apiIndex + 1, 1, onChunk, previousContent, isContinuation, signal, contextData);
     }
     
-    // Transient error -> Retry
     if (attempt < 5) {
-      const waitTime = Math.pow(2, attempt) * 2000 + Math.random() * 1000;
+      let waitTime = Math.pow(2, attempt) * 2000 + Math.random() * 1000;
+      if (err.message.startsWith('RATE_LIMIT:')) {
+        const ra = parseInt(err.message.split(':')[1]);
+        if (!isNaN(ra)) waitTime = (ra * 1000) + 1000; // use explicitly requested wait time
+      }
+      
       const waitSec = Math.round(waitTime/1000);
-      console.warn(`[RIG] API Error generating ${doc.id}: ${err.message}. Retrying in ${waitSec}s... (Attempt ${attempt}/5)`);
-      if(document.getElementById('prog-cur')) document.getElementById('prog-cur').textContent=`${failedName}: Error. Retrying in ${waitSec}s... (Attempt ${attempt}/5)`;
-      showToast(`${failedName}: ${err.message.substring(0,80)}. Retrying...`, 'err');
-      await new Promise(r=>setTimeout(r, waitTime));
-      return callAI(doc, apiIndex, attempt+1, onChunk, previousContent, isContinuation);
+      if(document.getElementById('prog-cur')) document.getElementById('prog-cur').textContent=`${failedName}: Error. Retrying in ${waitSec}s...`;
+      
+      try { await new Promise((res, rej) => {
+        let t = setTimeout(res, waitTime);
+        if (signal) signal.addEventListener('abort', () => { clearTimeout(t); rej(new Error('AbortError')); });
+      }); } catch(e) { throw e; }
+      
+      return callAI(doc, apiIndex, attempt+1, onChunk, previousContent, isContinuation, signal, contextData);
     }
     
-    // All retries exhausted -> Failover
-    console.warn(`[RIG] All retries exhausted on profile ${apiIndex}. Failing over to next profile.`);
     if (apiIndex + 1 < S.apiQueue.length) {
-      const next = S.apiQueue[apiIndex + 1];
-      const nextName = `${PROV[next.provider]?.name||next.provider} / ${next.model}`;
-      showToast(`${failedName} exhausted retries. Falling back to ${nextName}`, 'err');
-      if(document.getElementById('prog-cur')) document.getElementById('prog-cur').textContent=`All retries failed on ${failedName}. Switching to ${nextName}...`;
-    } else {
-      showToast(`All API profiles exhausted. ${failedName} was the last one.`, 'err');
+      showToast(`${failedName} exhausted retries. Falling back...`, 'err');
     }
-    return callAI(doc, apiIndex + 1, 1, onChunk, previousContent, isContinuation);
+    return callAI(doc, apiIndex + 1, 1, onChunk, previousContent, isContinuation, signal, contextData);
   }
 }

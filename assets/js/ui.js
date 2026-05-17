@@ -1,25 +1,25 @@
-// ── NAV & THEME ───────────────────────────────────────────────────
-function toggleTheme(){
-  const isLight = document.body.classList.toggle('light-theme');
-  document.getElementById('theme-icon').textContent = isLight ? '🌙' : '☀️';
-  try{localStorage.setItem('rig_theme', isLight ? 'light' : 'dark');}catch(e){}
+function estimateCost(inTok, outTok) {
+  let inRate = 0, outRate = 0; // Default to 0 (Free)
+  if (S.apiQueue && S.apiQueue.length > 0) {
+    const p = S.apiQueue[0].provider;
+    const m = S.apiQueue[0].model.toLowerCase();
+    
+    // Premium APIs
+    if (p === 'anthropic') {
+      if (m.includes('opus')) { inRate = 15; outRate = 75; }
+      else if (m.includes('sonnet')) { inRate = 3; outRate = 15; }
+      else if (m.includes('haiku')) { inRate = 0.25; outRate = 1.25; }
+    } else if (p === 'openai') {
+      if (m.includes('gpt-4o')) { inRate = 5; outRate = 15; }
+      else if (m.includes('gpt-4-turbo')) { inRate = 10; outRate = 30; }
+      else if (m.includes('gpt-3.5')) { inRate = 0.5; outRate = 1.5; }
+    } else if (p === 'gemini' && (m.includes('1.5-pro') || m.includes('gemini-1.5-pro'))) { 
+      inRate = 3.5; outRate = 10.5; 
+    }
+    // Groq and Gemini Flash/Free are kept as 0
+  }
+  return ((inTok / 1000000) * inRate) + ((outTok / 1000000) * outRate);
 }
-function goTo(n){
-  ['view-form','view-docs','view-gen','view-done'].forEach((id,i)=>document.getElementById(id).classList.toggle('active',i===n-1));
-  ['sp1','sp2','sp3','sp4'].forEach((id,i)=>{const el=document.getElementById(id);el.classList.remove('active','done');if(i+1===n)el.classList.add('active');else if(i+1<n)el.classList.add('done');});
-  S.view=n;window.scrollTo({top:0,behavior:'smooth'});
-}
-
-// ── DOC GRID ──────────────────────────────────────────────────────
-function renderDocGrid(){
-  const filtered=S.filter==='all'?DOCS:DOCS.filter(d=>d.cat===S.filter);
-  document.getElementById('doc-grid').innerHTML=filtered.map(d=>`<div class="doc-card ${S.selected.has(d.id)?'sel':''}" id="dc-${d.id}" onclick="toggleDoc('${d.id}')" title="${d.tip}"><div class="dc-check">✓</div><div class="dc-icon">${d.icon}</div><div class="dc-name">${d.name}</div><div class="dc-cat">${d.cat}</div></div>`).join('');
-  updateSelCount();
-}
-function toggleDoc(id){S.selected.has(id)?S.selected.delete(id):S.selected.add(id);document.getElementById(`dc-${id}`)?.classList.toggle('sel',S.selected.has(id));updateSelCount();}
-function filterDocs(el,cat){S.filter=cat;document.querySelectorAll('.fchip').forEach(c=>c.classList.remove('active'));el.classList.add('active');renderDocGrid();}
-function selAll(v){DOCS.forEach(d=>v?S.selected.add(d.id):S.selected.delete(d.id));renderDocGrid();}
-function updateSelCount(){document.getElementById('sel-count').textContent=`${S.selected.size} selected`;}
 
 function updateTokenUI(){
   const fmt=n=>n>=1000?(Math.round(n/100)/10)+'k':n;
@@ -27,6 +27,17 @@ function updateTokenUI(){
   if(ti)ti.textContent=fmt(S.tokenUsage.input);
   if(to)to.textContent=fmt(S.tokenUsage.output);
   if(tt)tt.textContent=fmt(S.tokenUsage.total);
+  
+  const cost = estimateCost(S.tokenUsage.input, S.tokenUsage.output);
+  const costStr = '$' + cost.toFixed(3);
+  const ce1=document.getElementById('cost-est'), ce2=document.getElementById('r-cost-est');
+  if (cost > 0) {
+    if(ce1) { ce1.textContent = 'Est. Cost: ' + costStr; ce1.style.display = 'block'; }
+    if(ce2) { ce2.textContent = 'Est. Cost: ' + costStr; ce2.style.display = 'block'; }
+  } else {
+    if(ce1) { ce1.style.display = 'none'; }
+    if(ce2) { ce2.style.display = 'none'; }
+  }
 }
 
 // ── RESULTS ───────────────────────────────────────────────────────
@@ -47,7 +58,7 @@ function showResults(docs){
       <div class="fc-icon">${d.icon}</div>
       <div class="fc-name">${d.name}</div>
       <div class="fc-cat">${d.cat}</div>
-      <button onclick="regenDoc(event,'${d.id}')" title="Regenerate Document" style="position:absolute;top:8px;right:8px;background:var(--bg);border:1px solid var(--border);color:var(--dim);border-radius:4px;cursor:pointer;padding:2px 6px;font-size:12px;">↻</button>
+      <button onclick="regenDoc(event,'${d.id}')" title="Regenerate Document" style="position:absolute;top:8px;right:34px;background:var(--bg);border:1px solid var(--border);color:var(--dim);border-radius:4px;cursor:pointer;padding:2px 6px;font-size:12px;">↻</button>
     </div>`;
   }).join('');
   goTo(4);
@@ -74,6 +85,22 @@ function hideEditor() {
   document.getElementById('pv-edit').style.display = 'none';
 }
 
+function renderMermaidGraphs() {
+  if (typeof mermaid !== 'undefined') {
+    document.querySelectorAll('.language-mermaid').forEach(block => {
+       const div = document.createElement('div');
+       div.className = 'mermaid';
+       div.textContent = block.textContent;
+       if (block.parentElement.tagName === 'PRE') {
+           block.parentElement.replaceWith(div);
+       } else {
+           block.replaceWith(div);
+       }
+    });
+    try { mermaid.init(undefined, document.querySelectorAll('.mermaid')); } catch(e) {}
+  }
+}
+
 function previewDoc(id,name,el){
   currentPreviewId = id;
   document.querySelectorAll('.fc-card').forEach(c=>c.classList.remove('active'));
@@ -88,6 +115,7 @@ function previewDoc(id,name,el){
     pvContent.textContent = content;
   }else{
     pvContent.innerHTML = marked.parse(content);
+    setTimeout(renderMermaidGraphs, 10);
   }
   
   pvContent.style.display = 'block';
@@ -103,7 +131,7 @@ function toggleEditPv(){
   const pvContent = document.getElementById('pv-content');
   const pvEdit = document.getElementById('pv-edit');
   
-  initEasyMDE(); // ensure loaded
+  initEasyMDE();
 
   if(btn.textContent === 'Edit'){
     btn.textContent = 'Save';
@@ -125,6 +153,7 @@ function toggleEditPv(){
       pvContent.textContent = newContent;
     }else{
       pvContent.innerHTML = marked.parse(newContent);
+      setTimeout(renderMermaidGraphs, 10);
     }
     pvContent.style.display = 'block';
     hideEditor();
@@ -146,14 +175,23 @@ async function regenDoc(e, id){
   }
   
   try {
-    S.generated[id] = await callAI(doc, 0, 1, (content) => {
-      if(currentPreviewId === id) {
-        document.getElementById('pv-content').innerHTML = marked.parse(content) + '<span class="cursor" style="opacity:0.5">|</span>';
-        const pv = document.getElementById('pv-content');
-        if(pv.parentElement) pv.parentElement.scrollTop = pv.parentElement.scrollHeight;
-      }
-    });
-    persistSave('rig_drafts', S.generated);
+    let rawText = await callAI(doc, 0, 1, null);
+    
+    let finalText = rawText;
+    let summary = "";
+    if (rawText.includes("---DOC_SUMMARY---")) {
+        const parts = rawText.split("---DOC_SUMMARY---");
+        finalText = parts[0].trim();
+        summary = parts[1] ? parts[1].trim() : "";
+    } else {
+        summary = rawText.substring(0, 400) + "... (No summary provided by AI)";
+    }
+    
+    S.generated[id] = finalText;
+    S.summaries = S.summaries || {};
+    S.summaries[id] = summary;
+    
+    persistSave('rig_drafts', { project: S.project, generated: S.generated, summaries: S.summaries, tokenUsage: S.tokenUsage });
     showToast(`${doc.name} regenerated!`, 'ok');
   } catch(err) {
     S.generated[id] = `[Generation error]\n\n${err.message}`;
