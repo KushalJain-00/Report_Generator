@@ -28,6 +28,7 @@
     <span class="sp" id="sp4">04 Download</span>
   </div>
   <div class="topbar-right">
+    <a href="yt.html" class="tbtn" style="text-decoration:none; color:var(--cyan); font-weight:700; border-color:rgba(100, 242, 255, 0.3);">YT.AI</a>
     <button class="tbtn" id="btn-theme" onclick="toggleTheme()" style="padding: 7px 10px;" title="Toggle Light/Dark Theme">
       <span id="theme-icon" style="font-size:14px;line-height:1;">☀️</span>
     </button>
@@ -222,12 +223,13 @@
       <!-- Add provider card -->
       <div style="background:var(--ink3);border:1px solid var(--wire);border-radius:var(--r12);padding:14px">
         <div style="font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:10px;font-weight:500">Add Provider</div>
-        <div class="ptabs" id="ptabs" style="margin-bottom:12px">
+        <div class="ptabs" id="ptabs" style="margin-bottom:12px; display:flex; flex-wrap:wrap; gap:6px;">
           <span class="ptab active" data-p="anthropic" onclick="switchProv(this,'anthropic')">Anthropic</span>
           <span class="ptab" data-p="openai" onclick="switchProv(this,'openai')">OpenAI</span>
           <span class="ptab" data-p="gemini" onclick="switchProv(this,'gemini')">Gemini</span>
           <span class="ptab" data-p="openrouter" onclick="switchProv(this,'openrouter')">OpenRouter</span>
           <span class="ptab" data-p="groq" onclick="switchProv(this,'groq')">Groq</span>
+          <span class="ptab" data-p="deepseek" onclick="switchProv(this,'deepseek')">DeepSeek</span>
         </div>
         <div class="api-wrap" style="margin-bottom:10px">
           <input type="password" id="api-key-inp" placeholder="Paste your API key...">
@@ -252,6 +254,17 @@
       <button class="modal-x" onclick="closeSettings()">✕</button>
     </div>
     <div class="modal-body" style="padding-top:26px;padding-bottom:10px">
+      <div style="background:var(--ink3);border:1px solid var(--wire);border-radius:var(--r12);padding:14px;margin-bottom:16px">
+        <div style="font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:10px;font-weight:500">Engine Configuration</div>
+        <div class="wm-row" style="margin-bottom:8px">
+          <input type="checkbox" id="s-degrade" style="margin-right:8px">
+          <label for="s-degrade" style="cursor:pointer;font-size:13px">Enable Model Degradation <span style="font-size:11px;color:var(--dim);display:block;margin-top:2px">If rate limited, fallback to lighter models (e.g., 8b/flash) before switching providers.</span></label>
+        </div>
+        <div class="wm-row">
+          <input type="checkbox" id="s-rotate" style="margin-right:8px">
+          <label for="s-rotate" style="cursor:pointer;font-size:13px">Enable API Key Rotation <span style="font-size:11px;color:var(--dim);display:block;margin-top:2px">Automatically round-robin between keys of the same provider to avoid rate limits.</span></label>
+        </div>
+      </div>
       <div class="field fc" style="margin-bottom:16px">
         <label style="margin-bottom:8px">System Persona</label>
         <textarea id="s-persona" style="min-height:120px;line-height:1.7"></textarea>

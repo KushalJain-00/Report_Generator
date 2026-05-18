@@ -25,8 +25,35 @@ document.getElementById('btn-to-docs').onclick=()=>{
 function cancelGen() {
   if (S.genController) {
     S.genController.abort();
-    document.getElementById('prog-cur').textContent = 'Generation cancelled by user.';
+    document.getElementById('prog-cur').textContent = 'Cancelling... please wait.';
     document.getElementById('btn-cancel-gen').style.display = 'none';
+    
+    // Fallback: if the async flow hasn't transitioned us away in 3 seconds, force it
+    setTimeout(() => {
+      if (S.view === 3) { // still stuck on generation view
+        forcePostCancel();
+      }
+    }, 3000);
+  }
+}
+
+function forcePostCancel() {
+  const toGen = DOCS.filter(d => S.selected.has(d.id));
+  const hasAnyContent = toGen.some(d => S.generated[d.id]);
+  
+  if (hasAnyContent) {
+    document.getElementById('prog-lbl').textContent = 'Generation Cancelled';
+    document.getElementById('prog-cur').textContent = 'Loading results...';
+    setTimeout(() => showResults(toGen), 300);
+  } else {
+    document.getElementById('prog-lbl').textContent = 'Generation Cancelled';
+    document.getElementById('prog-cur').textContent = 'No documents were completed.';
+    // Show a back button so the user isn't stranded
+    const btnRow = document.querySelector('#view-gen .btn-row');
+    if (btnRow && !document.getElementById('btn-cancel-back')) {
+      btnRow.innerHTML = `<button class="btn btn-ghost" id="btn-cancel-back" onclick="goTo(2)" style="flex:1;justify-content:center">← Back to Documents</button>
+        <button class="btn btn-lime" id="btn-cancel-retry" onclick="startGen()" style="flex:1;justify-content:center">Retry Generation</button>`;
+    }
   }
 }
 
@@ -60,6 +87,7 @@ async function startGen(restoreDraft = false){
   document.getElementById('cnt-left').textContent=queue.length;
   document.getElementById('cnt-done').textContent=doneCount;
   document.getElementById('cnt-gen').textContent=0;
+  S.notifiedRefDrop = false; // Reset the token saver notification flag
   
   const processDocument = async (doc) => {
     if (S.genController.signal.aborted) return;
@@ -74,10 +102,14 @@ async function startGen(restoreDraft = false){
     document.getElementById('cnt-left').textContent=toGen.length-doneCount-inProgress;
     
     // Cross-document Context (Summaries only)
+    // Cross-document Context (Summaries only) - Trimmed to prevent token exhaustion
     let contextData = '';
     const doneKeys = Object.keys(S.summaries || {});
     if (doneKeys.length > 0) {
-      doneKeys.forEach(k => {
+      const coreDocs = ['overview', 'charter'];
+      const recentKeys = doneKeys.filter(k => !coreDocs.includes(k)).slice(-3);
+      const keysToUse = [...new Set([...coreDocs.filter(k => doneKeys.includes(k)), ...recentKeys])];
+      keysToUse.forEach(k => {
          const docObj = DOCS.find(d=>d.id===k);
          if(docObj) contextData += `\n[Document: ${docObj.name}]\n${S.summaries[k]}\n`;
       });
@@ -139,12 +171,13 @@ async function startGen(restoreDraft = false){
   
   await Promise.all(workers);
 
+  document.getElementById('btn-cancel-gen').style.display = 'none';
+
   if (S.genController.signal.aborted) {
-    document.getElementById('prog-cur').textContent='Generation cancelled. Drafts saved.';
+    forcePostCancel();
     return;
   }
 
-  document.getElementById('btn-cancel-gen').style.display = 'none';
   document.getElementById('prog-lbl').textContent='Generation Complete!';
   document.getElementById('prog-cur').textContent='All documents ready — preparing results...';
   setTimeout(()=>showResults(toGen),800);
@@ -218,17 +251,19 @@ function applyBrandsState(data) {
     if (data) { applyBrandsState(data); }
   } catch(e) {}
 
-  // Prompts
+  // Prompts and Engine Settings
   try {
       const p = await persistLoad('rig_prompts');
       if (p && p.systemPersona) {
-          if (!p.outputDirectives.includes('Mermaid.js')) {
-             // Force migration to new rich content prompts
+          if (!p.outputDirectives.includes('TO AVOID SYNTAX ERRORS')) {
+             // Force migration to new rich content prompts with Mermaid fixes
              persistSave('rig_prompts', S.prompts);
           } else {
              S.prompts = p;
           }
       }
+      const e = await persistLoad('rig_engine');
+      if (e) S.engine = {...S.engine, ...e};
   } catch(e) {}
 
   renderDocGrid();

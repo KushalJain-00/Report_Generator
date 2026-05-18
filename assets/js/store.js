@@ -60,25 +60,27 @@ const S={
   brandProfiles:[],
   activeBrandIdx:-1,
   tokenUsage:{input:0,output:0,total:0},
+  engine: { degradeModels: true, keyRotation: true },
   prompts: {
     systemPersona: `You are an elite, top-tier management consultant, project manager, and domain expert specializing in producing high-quality, professional-grade enterprise documentation. You deliver actionable, precise, and highly detailed reports with zero fluff. You use business-appropriate language, adhere strictly to requested structures, and provide rich, realistic, and contextually accurate insights based on the provided parameters.`,
     outputDirectives: `--- OUTPUT DIRECTIVES ---
 1. Language: Strictly write in {lang}.
 2. Formatting: Use extremely well-structured Markdown. Use clear, hierarchical headings (H1, H2, H3), bullet points, and bold text for emphasis.
 3. Tables & Data: Use proper Markdown tables extensively (with | Column | Column | syntax). EVERY document must contain detailed tables with rich, researched data points (metrics, costs, percentages, dates, etc). NEVER use ASCII art for tables.
-4. Diagrams & Graphs: Use Mermaid.js (fenced code block with \`\`\`mermaid) to generate relevant diagrams (flowcharts, Gantt charts, pie charts, or mindmaps) to visualize complex information where needed.
+4. Diagrams & Graphs: Use Mermaid.js (fenced code block with \`\`\`mermaid) to generate relevant diagrams. TO AVOID SYNTAX ERRORS: Do not use special characters ()[]{} inside node text unless the text is strictly enclosed in double quotes (e.g., A["Node text (info)"]).
 5. Professionalism: Maintain a formal, authoritative, and consultative tone. Avoid generic AI introductory or concluding remarks. Start immediately with the document content.
 6. Detail Level & Deep Research: Maximize depth. Write extremely content-rich, long-form sections. Do not use placeholders like "[Insert Date]". Generate highly realistic, meticulously researched hypothetical data, technical details, timelines, and quantitative metrics that perfectly match the project context.
-7. Hidden Memory Summary: At the very end of your response, you MUST append a new section starting exactly with the exact text "---DOC_SUMMARY---" on a new line, followed by a dense 3-4 sentence summary of the key facts, figures, and strategic decisions established in this document. This summary will be used as memory for future AI generation steps.`
+7. Hidden Memory Summary: At the very end of your response, you MUST append a new section starting exactly with the exact text "---DOC_SUMMARY---" on a new line, followed by a dense 3-4 sentence summary of the key facts, figures, and strategic decisions established in this document. DO NOT include any markdown tables, bullet lists, or mermaid diagrams in this summary. This summary will be used as memory for future AI generation steps.`
   }
 };
 
 const PROV={
-  anthropic:{name:'Anthropic',models:['claude-3-5-sonnet-20241022','claude-3-opus-20240229','claude-3-5-haiku-20241022'],ph:'sk-ant-api03-...',note:'Get key at <a href="https://console.anthropic.com" target="_blank">console.anthropic.com</a>'},
-  openai:{name:'OpenAI',models:['gpt-4o','gpt-4o-mini','gpt-4-turbo','gpt-3.5-turbo'],ph:'sk-proj-...',note:'Get key at <a href="https://platform.openai.com/api-keys" target="_blank">platform.openai.com</a>'},
-  gemini:{name:'Gemini',models:['gemini-2.0-flash','gemini-1.5-pro','gemini-1.5-flash'],ph:'AIza...',note:'Get key at <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com</a>'},
-  openrouter:{name:'OpenRouter',models:['anthropic/claude-3.5-sonnet','openai/gpt-4o','google/gemini-2.0-flash-exp:free','meta-llama/llama-3.3-70b-instruct'],ph:'sk-or-v1-...',note:'Get key at <a href="https://openrouter.ai/keys" target="_blank">openrouter.ai</a> — Enter multiple models separated by commas for native routing fallback.'},
-  groq:{name:'Groq',models:['llama-3.3-70b-versatile','llama-3.1-8b-instant','mixtral-8x7b-32768','gemma2-9b-it'],ph:'gsk_...',note:'Get key at <a href="https://console.groq.com/keys" target="_blank">console.groq.com</a>'},
+  anthropic:{name:'Anthropic',models:['claude-3-5-sonnet-20241022','claude-3-opus-20240229','claude-3-5-haiku-20241022'], fallbackModel: 'claude-3-5-haiku-20241022', ph:'sk-ant-api03-...',note:'Get key at <a href="https://console.anthropic.com" target="_blank">console.anthropic.com</a>'},
+  openai:{name:'OpenAI',models:['gpt-4o','gpt-4o-mini','gpt-4-turbo','gpt-3.5-turbo'], fallbackModel: 'gpt-4o-mini', ph:'sk-proj-...',note:'Get key at <a href="https://platform.openai.com/api-keys" target="_blank">platform.openai.com</a>'},
+  gemini:{name:'Gemini',models:['gemini-2.0-flash','gemini-1.5-pro','gemini-1.5-flash'], fallbackModel: 'gemini-1.5-flash', ph:'AIza...',note:'Get key at <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com</a>'},
+  openrouter:{name:'OpenRouter',models:['google/gemini-2.0-flash-exp:free,meta-llama/llama-3.3-70b-instruct:free,qwen/qwen-2.5-72b-instruct:free', 'anthropic/claude-3.5-sonnet','openai/gpt-4o','google/gemini-2.0-flash-exp:free','meta-llama/llama-3.3-70b-instruct'], fallbackModel: 'google/gemini-2.0-flash-exp:free,meta-llama/llama-3.3-70b-instruct:free,qwen/qwen-2.5-72b-instruct:free', ph:'sk-or-v1-...',note:'Get key at <a href="https://openrouter.ai/keys" target="_blank">openrouter.ai</a> — Select the first model for native Free Auto-Fallback!'},
+  groq:{name:'Groq',models:['llama-3.3-70b-versatile','llama-3.1-8b-instant','mixtral-8x7b-32768','gemma2-9b-it'], fallbackModel: 'llama-3.1-8b-instant', ph:'gsk_...',note:'Get key at <a href="https://console.groq.com/keys" target="_blank">console.groq.com</a>'},
+  deepseek:{name:'DeepSeek',models:['deepseek-chat','deepseek-reasoner'], fallbackModel: 'deepseek-chat', ph:'sk-...',note:'Get key at <a href="https://platform.deepseek.com" target="_blank">platform.deepseek.com</a>'},
 };
 
 // ── PERSISTENT STORAGE (localStorage + IndexedDB fallback) ────────

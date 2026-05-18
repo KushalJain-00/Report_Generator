@@ -1,3 +1,28 @@
+// ── NAV & THEME ───────────────────────────────────────────────────
+function toggleTheme(){
+  const isLight = document.body.classList.toggle('light-theme');
+  document.getElementById('theme-icon').textContent = isLight ? '🌙' : '☀️';
+  try{localStorage.setItem('rig_theme', isLight ? 'light' : 'dark');}catch(e){}
+}
+
+function goTo(n){
+  ['view-form','view-docs','view-gen','view-done'].forEach((id,i)=>document.getElementById(id).classList.toggle('active',i===n-1));
+  ['sp1','sp2','sp3','sp4'].forEach((id,i)=>{const el=document.getElementById(id);el.classList.remove('active','done');if(i+1===n)el.classList.add('active');else if(i+1<n)el.classList.add('done');});
+  S.view=n;window.scrollTo({top:0,behavior:'smooth'});
+}
+
+// ── DOC GRID ──────────────────────────────────────────────────────
+function renderDocGrid(){
+  const filtered=S.filter==='all'?DOCS:DOCS.filter(d=>d.cat===S.filter);
+  document.getElementById('doc-grid').innerHTML=filtered.map(d=>`<div class="doc-card ${S.selected.has(d.id)?'sel':''}" id="dc-${d.id}" onclick="toggleDoc('${d.id}')" title="${d.tip}"><div class="dc-check">✓</div><div class="dc-icon">${d.icon}</div><div class="dc-name">${d.name}</div><div class="dc-cat">${d.cat}</div></div>`).join('');
+  updateSelCount();
+}
+function toggleDoc(id){S.selected.has(id)?S.selected.delete(id):S.selected.add(id);document.getElementById(`dc-${id}`)?.classList.toggle('sel',S.selected.has(id));updateSelCount();}
+function filterDocs(el,cat){S.filter=cat;document.querySelectorAll('.fchip').forEach(c=>c.classList.remove('active'));el.classList.add('active');renderDocGrid();}
+function selAll(v){DOCS.forEach(d=>v?S.selected.add(d.id):S.selected.delete(d.id));renderDocGrid();}
+function updateSelCount(){document.getElementById('sel-count').textContent=`${S.selected.size} selected`;}
+
+// ── COST ESTIMATION ───────────────────────────────────────────────
 function estimateCost(inTok, outTok) {
   let inRate = 0, outRate = 0; // Default to 0 (Free)
   if (S.apiQueue && S.apiQueue.length > 0) {
@@ -42,16 +67,21 @@ function updateTokenUI(){
 
 // ── RESULTS ───────────────────────────────────────────────────────
 function showResults(docs){
+  // Only show documents that actually have generated content
+  const generatedDocs = docs.filter(d => S.generated[d.id]);
+  
   const elapsed=Math.round((Date.now()-S.startTime)/1000);
-  const totalWords=Object.keys(S.generated).reduce((a,id)=>{const c=S.generated[id]||'';return a+c.split(/\s+/).length},0);
-  document.getElementById('r-docs').textContent=Object.keys(S.generated).length;
+  // Count words only from successfully generated (non-error) docs
+  const successKeys = Object.keys(S.generated).filter(id => !S.generated[id].startsWith('[Generation error'));
+  const totalWords=successKeys.reduce((a,id)=>{const c=S.generated[id]||'';return a+c.split(/\s+/).length},0);
+  document.getElementById('r-docs').textContent=generatedDocs.length;
   document.getElementById('r-words').textContent=totalWords>=1000?(Math.round(totalWords/100)/10)+'k':totalWords;
   document.getElementById('r-time').textContent=elapsed+'s';
   const fmtT=n=>n>=1000?(Math.round(n/100)/10)+'k':n;
   document.getElementById('r-tok-in').textContent=fmtT(S.tokenUsage.input);
   document.getElementById('r-tok-out').textContent=fmtT(S.tokenUsage.output);
   document.getElementById('r-tok-total').textContent=fmtT(S.tokenUsage.total);
-  document.getElementById('final-grid').innerHTML=docs.map(d=>{
+  document.getElementById('final-grid').innerHTML=generatedDocs.map(d=>{
     const isErr=S.generated[d.id]?.startsWith('[Generation error');
     return `<div class="fc-card ${isErr?'err-card':''}" onclick="previewDoc('${d.id}','${d.name.replace(/'/g,"\\'")}',this)">
       <div class="fc-badge">${isErr?'!':'✓'}</div>
@@ -418,6 +448,8 @@ function openSettings() {
     document.getElementById('settings-overlay').classList.add('open');
     document.getElementById('s-persona').value = S.prompts.systemPersona;
     document.getElementById('s-directives').value = S.prompts.outputDirectives;
+    document.getElementById('s-degrade').checked = S.engine.degradeModels;
+    document.getElementById('s-rotate').checked = S.engine.keyRotation;
 }
 
 function closeSettings() {
@@ -427,8 +459,13 @@ function closeSettings() {
 function saveSettings() {
     S.prompts.systemPersona = document.getElementById('s-persona').value;
     S.prompts.outputDirectives = document.getElementById('s-directives').value;
+    S.engine.degradeModels = document.getElementById('s-degrade').checked;
+    S.engine.keyRotation = document.getElementById('s-rotate').checked;
+    
     persistSave('rig_prompts', S.prompts);
-    showToast('Prompt settings saved!', 'ok');
+    persistSave('rig_engine', S.engine);
+    
+    showToast('Settings saved successfully!', 'ok');
     closeSettings();
 }
 
