@@ -305,6 +305,26 @@ function removeApiFromQueue(idx) {
     showToast(`Removed ${PROV[removed?.provider]?.name||'profile'} from queue`, 'ok');
 }
 
+function moveApiQueueUp(idx) {
+    if (idx <= 0) return;
+    const temp = S.apiQueue[idx - 1];
+    S.apiQueue[idx - 1] = S.apiQueue[idx];
+    S.apiQueue[idx] = temp;
+    persistSave('rig_api_queue', S.apiQueue);
+    renderApiQueue();
+    updateApiTopbar();
+}
+
+function moveApiQueueDown(idx) {
+    if (idx >= S.apiQueue.length - 1) return;
+    const temp = S.apiQueue[idx + 1];
+    S.apiQueue[idx + 1] = S.apiQueue[idx];
+    S.apiQueue[idx] = temp;
+    persistSave('rig_api_queue', S.apiQueue);
+    renderApiQueue();
+    updateApiTopbar();
+}
+
 function renderApiQueue() {
     const list = document.getElementById('api-queue-list');
     if (!list) return;
@@ -322,7 +342,11 @@ function renderApiQueue() {
                 <div style="font-size:12px;font-weight:600;color:var(--white);display:flex;align-items:center">${provName}${badge}</div>
                 <div style="font-size:10px;color:var(--dim);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${api.model} · ${keyHint}</div>
             </div>
-            <button onclick="removeApiFromQueue(${idx})" style="width:24px;height:24px;border-radius:4px;background:transparent;border:1px solid var(--wire);color:var(--dim);cursor:pointer;font-size:10px;display:flex;align-items:center;justify-content:center;transition:all 0.2s;flex-shrink:0" onmouseover="this.style.borderColor='var(--rose)';this.style.color='var(--rose)'" onmouseout="this.style.borderColor='var(--wire)';this.style.color='var(--dim)'" title="Remove">✕</button>
+            <div style="display:flex;gap:4px;flex-shrink:0;">
+                <button onclick="moveApiQueueUp(${idx})" style="width:24px;height:24px;border-radius:4px;background:transparent;border:1px solid var(--wire);color:${idx===0?'var(--ink3)':'var(--dim)'};cursor:${idx===0?'default':'pointer'};font-size:10px;display:flex;align-items:center;justify-content:center;transition:all 0.2s;" ${idx!==0?'onmouseover="this.style.borderColor=\'var(--lime)\';this.style.color=\'var(--lime)\'" onmouseout="this.style.borderColor=\'var(--wire)\';this.style.color=\'var(--dim)\'"':''} title="Move Up">▲</button>
+                <button onclick="moveApiQueueDown(${idx})" style="width:24px;height:24px;border-radius:4px;background:transparent;border:1px solid var(--wire);color:${idx===S.apiQueue.length-1?'var(--ink3)':'var(--dim)'};cursor:${idx===S.apiQueue.length-1?'default':'pointer'};font-size:10px;display:flex;align-items:center;justify-content:center;transition:all 0.2s;" ${idx!==S.apiQueue.length-1?'onmouseover="this.style.borderColor=\'var(--lime)\';this.style.color=\'var(--lime)\'" onmouseout="this.style.borderColor=\'var(--wire)\';this.style.color=\'var(--dim)\'"':''} title="Move Down">▼</button>
+                <button onclick="removeApiFromQueue(${idx})" style="width:24px;height:24px;border-radius:4px;background:transparent;border:1px solid var(--wire);color:var(--dim);cursor:pointer;font-size:10px;display:flex;align-items:center;justify-content:center;transition:all 0.2s;" onmouseover="this.style.borderColor='var(--rose)';this.style.color='var(--rose)'" onmouseout="this.style.borderColor='var(--wire)';this.style.color='var(--dim)'" title="Remove">✕</button>
+            </div>
         </div>`;
     }).join('');
 }
