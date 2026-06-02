@@ -272,7 +272,19 @@ function applyBrandsState(data) {
   try {
       const draft = await persistLoad('rig_drafts');
       if (draft && draft.generated && Object.keys(draft.generated).length > 0) {
-          if (confirm("You have a previously unsaved session. Would you like to restore it?")) {
+          const banner = document.createElement('div');
+          banner.style.cssText = 'background:var(--ink2); border-bottom:1px solid var(--wire); padding:12px 20px; display:flex; justify-content:space-between; align-items:center; color:var(--white); font-size:13px; z-index:9999; position:relative;';
+          banner.innerHTML = `
+            <div><strong>Unsaved Session</strong> &mdash; You have a previously generated report. Would you like to restore it?</div>
+            <div style="display:flex;gap:10px">
+              <button id="btn-restore-yes" class="btn btn-lime" style="padding:6px 14px;min-height:0;font-size:12px;">Restore</button>
+              <button id="btn-restore-no" class="btn btn-ghost" style="padding:6px 14px;min-height:0;font-size:12px;border-color:var(--wire);color:var(--dim);">Discard</button>
+            </div>
+          `;
+          document.body.insertBefore(banner, document.body.firstChild);
+
+          document.getElementById('btn-restore-yes').onclick = () => {
+              banner.remove();
               S.project = draft.project || {};
               S.generated = draft.generated;
               S.summaries = draft.summaries || {};
@@ -280,7 +292,7 @@ function applyBrandsState(data) {
               
               // Pre-fill fields
               ['name','sector','geo','client','audience','desc','standards','price','duration','lang'].forEach(k=>{
-                 const el = document.getElementById(`f-${k}`);
+                 const el = document.getElementById(\`f-\${k}\`);
                  if (el && S.project[k]) el.value = S.project[k];
               });
               
@@ -288,9 +300,12 @@ function applyBrandsState(data) {
               S.selected = new Set(Object.keys(S.generated));
               renderDocGrid();
               showResults(DOCS.filter(d=>S.selected.has(d.id)));
-          } else {
+          };
+
+          document.getElementById('btn-restore-no').onclick = () => {
+              banner.remove();
               idbDelete('rig_drafts').catch(()=>{});
-          }
+          };
       }
   } catch(e) {}
 
