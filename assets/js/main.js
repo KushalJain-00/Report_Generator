@@ -292,7 +292,7 @@ function applyBrandsState(data) {
               
               // Pre-fill fields
               ['name','sector','geo','client','audience','desc','standards','price','duration','lang'].forEach(k=>{
-                 const el = document.getElementById(\`f-\${k}\`);
+                 const el = document.getElementById(`f-${k}`);
                  if (el && S.project[k]) el.value = S.project[k];
               });
               
