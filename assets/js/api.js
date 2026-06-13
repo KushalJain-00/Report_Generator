@@ -66,9 +66,13 @@ async function callAI(doc, apiIndex=0, attempt=1, onChunk=null, previousContent=
       url=p==='openai'?'https://api.openai.com/v1/chat/completions':(p==='openrouter'?'https://openrouter.ai/api/v1/chat/completions':(p==='deepseek'?'https://api.deepseek.com/chat/completions':'https://api.groq.com/openai/v1/chat/completions'));
       headers={'Content-Type':'application/json','Authorization':`Bearer ${key}`};
       if(p==='openrouter') headers['HTTP-Referer']='https://rig-app.com';
-      let selectedModel = model;
-      if (p==='openrouter' && model.includes(',')) selectedModel = model.split(',').map(m => m.trim());
-      body=JSON.stringify({model:selectedModel,max_tokens:4096,messages:[{role:'user',content:prompt}],stream:true,stream_options:{include_usage:true}});
+      let bodyPayload = {max_tokens:4096,messages:[{role:'user',content:prompt}],stream:true,stream_options:{include_usage:true}};
+      if (p==='openrouter' && model.includes(',')) {
+        bodyPayload.models = model.split(',').map(m => m.trim());
+      } else {
+        bodyPayload.model = model;
+      }
+      body=JSON.stringify(bodyPayload);
     }else if(p==='gemini'){
       url=`https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${key}`;
       headers={'Content-Type':'application/json'};
@@ -158,12 +162,13 @@ async function callAI(doc, apiIndex=0, attempt=1, onChunk=null, previousContent=
     }
 
     const isAuthError = errStr.includes('401') || errStr.includes('403') || errStr.includes('invalid api key') || errStr.includes('unauthorized') || errStr.includes('api_key');
+    const isBadRequest = errStr.includes('400') || errStr.includes('bad request');
     const failedName = `${PROV[p]?.name||p} / ${model}`;
     
-    if (isAuthError) {
+    if (isAuthError || isBadRequest) {
       if (apiIndex + 1 < S.apiQueue.length) {
         const next = S.apiQueue[apiIndex + 1];
-        showToast(`${failedName} failed (auth). Falling back...`, 'err');
+        showToast(`${failedName} failed (${isAuthError ? 'auth' : 'bad request'}). Falling back...`, 'err');
         return callAI(doc, apiIndex + 1, 1, onChunk, previousContent, isContinuation, signal, contextData);
       }
       return callAI(doc, apiIndex + 1, 1, onChunk, previousContent, isContinuation, signal, contextData);
