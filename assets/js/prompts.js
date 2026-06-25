@@ -70,5 +70,8 @@ ${b.watermark?`CONFIDENTIALITY NOTE: This document is classified as [${b.waterma
 
   const taskDef = pm[doc.id]||`Generate a professional "${doc.name}" document for the service "${p.name}". Make it detailed, ready to use and practical.`;
   
-  return `${systemPersona}\n\n${ctx}\n\n--- DOCUMENT TASK ---\n${taskDef}\n\n${outputDirectives}`;
+  return {
+    system: `${systemPersona}\n\n${outputDirectives}`,
+    user: `${ctx}\n\n--- DOCUMENT TASK ---\n${taskDef}`
+  };
 }

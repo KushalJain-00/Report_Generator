@@ -28,15 +28,18 @@ async function callAI(doc, apiIndex=0, attempt=1, onChunk=null, previousContent=
       projectContext.referenceText = "";
   }
   
-  let prompt = buildPrompt(doc, projectContext, S.brand);
+  let promptObj = buildPrompt(doc, projectContext, S.brand);
+  let systemText = promptObj.system;
+  let userText = promptObj.user;
+
   if (contextData) {
-    prompt += `\n\n--- PREVIOUS DOCUMENT CONTEXT ---\nTo maintain consistency across the entire report, here are summaries/snippets of previously generated documents in this package:\n${contextData}\nMake sure your new content aligns with these facts.`;
+    userText += `\n\n--- PREVIOUS DOCUMENT CONTEXT ---\nTo maintain consistency across the entire report, here are summaries/snippets of previously generated documents in this package:\n${contextData}\nMake sure your new content aligns with these facts.`;
   }
   if (isContinuation) {
-    prompt += `\n\n--- CONTINUATION INSTRUCTION ---\nThe following is what you have generated so far. You hit the maximum token limit. Continue generating EXACTLY where you left off. Do not include introductory text, do not repeat what is already written. Just continue the next sentence.\n\n[PREVIOUS CONTENT]\n${previousContent}`;
+    userText += `\n\n--- CONTINUATION INSTRUCTION ---\nYou hit the maximum token limit. Continue generating EXACTLY where you left off. Do not include introductory text, do not repeat what is already written. Just continue the next sentence.`;
   }
 
-  const promptTokensEst = estimateTokens(prompt);
+  const promptTokensEst = estimateTokens(systemText + userText);
   let cutOff = false;
   
   // AbortController logic for explicit timeout & user cancel
@@ -61,12 +64,23 @@ async function callAI(doc, apiIndex=0, attempt=1, onChunk=null, previousContent=
     if(p==='anthropic'){
       url='https://api.anthropic.com/v1/messages';
       headers={'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'};
-      body=JSON.stringify({model,max_tokens:4096,messages:[{role:'user',content:prompt}],stream:true});
+      let msgs = [{role:'user',content:userText}];
+      if (isContinuation && previousContent) {
+         msgs.push({role:'assistant', content:previousContent});
+      }
+      body=JSON.stringify({model, system: systemText, max_tokens:4096, messages:msgs, stream:true});
     }else if(['openai','openrouter','groq','deepseek'].includes(p)){
       url=p==='openai'?'https://api.openai.com/v1/chat/completions':(p==='openrouter'?'https://openrouter.ai/api/v1/chat/completions':(p==='deepseek'?'https://api.deepseek.com/chat/completions':'https://api.groq.com/openai/v1/chat/completions'));
       headers={'Content-Type':'application/json','Authorization':`Bearer ${key}`};
       if(p==='openrouter') headers['HTTP-Referer']='https://rig-app.com';
-      let bodyPayload = {max_tokens:4096,messages:[{role:'user',content:prompt}],stream:true,stream_options:{include_usage:true}};
+      let msgs = [
+        {role:'system', content:systemText},
+        {role:'user', content:userText}
+      ];
+      if (isContinuation && previousContent) {
+         msgs.push({role:'assistant', content:previousContent});
+      }
+      let bodyPayload = {max_tokens:4096,messages:msgs,stream:true,stream_options:{include_usage:true}};
       if (p==='openrouter' && model.includes(',')) {
         bodyPayload.models = model.split(',').map(m => m.trim());
       } else {
@@ -76,7 +90,16 @@ async function callAI(doc, apiIndex=0, attempt=1, onChunk=null, previousContent=
     }else if(p==='gemini'){
       url=`https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${key}`;
       headers={'Content-Type':'application/json'};
-      body=JSON.stringify({contents:[{parts:[{text:prompt}]}],generationConfig:{maxOutputTokens:4096}});
+      let contents = [{role: "user", parts: [{text: userText}]}];
+      if (isContinuation && previousContent) {
+         contents.push({role: "model", parts: [{text: previousContent}]});
+         contents.push({role: "user", parts: [{text: "Continue."}]});
+      }
+      body=JSON.stringify({
+         systemInstruction: { parts: [{text: systemText}] },
+         contents: contents,
+         generationConfig:{maxOutputTokens:8192}
+      });
     }else throw new Error('Unknown provider');
 
     const r=await fetch(url,{method:'POST',headers,body,signal:localController.signal});
@@ -174,21 +197,21 @@ async function callAI(doc, apiIndex=0, attempt=1, onChunk=null, previousContent=
       return callAI(doc, apiIndex + 1, 1, onChunk, previousContent, isContinuation, signal, contextData);
     }
     
-    let isRateLimit = err.message.startsWith('RATE_LIMIT:') || err.message.match(/try again in ([0-9.]+)s/i) || err.message.includes('429');
+    let isRateLimit = err.message.startsWith('RATE_LIMIT:') || err.message.match(/try again in ([0-9.]+)s/i) || err.message.includes('429') || err.message.toLowerCase().includes('too many requests');
     let maxAttempts = isRateLimit ? 8 : 5; // Allow more retries for rate limits
     
     if (attempt < maxAttempts) {
-      let waitTime = Math.pow(2, attempt) * 2000 + Math.random() * 1000;
+      let waitTime = Math.pow(2, attempt) * 3000 + Math.random() * 2000;
       
       if (err.message.startsWith('RATE_LIMIT:')) {
         const ra = parseFloat(err.message.split(':')[1]);
-        if (!isNaN(ra)) waitTime = (ra * 1000) + 1000;
+        if (!isNaN(ra)) waitTime = Math.max((ra * 1000) + 2000, waitTime);
       } else if (err.message.match(/try again in ([0-9.]+)s/i)) {
         const match = err.message.match(/try again in ([0-9.]+)s/i);
         const ra = parseFloat(match[1]);
-        if (!isNaN(ra)) waitTime = (ra * 1000) + 1000;
+        if (!isNaN(ra)) waitTime = Math.max((ra * 1000) + 2000, waitTime);
       } else if (isRateLimit) {
-        waitTime = Math.max(waitTime, 10000); // Minimum 10s wait for generic 429
+        waitTime = Math.max(waitTime, 15000); // Minimum 15s wait for generic 429
       }
       
       const waitSec = Math.round(waitTime/1000);

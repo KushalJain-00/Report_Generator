@@ -165,6 +165,10 @@ async function startGen(restoreDraft = false){
       while(queue.length > 0 && !S.genController.signal.aborted) {
         const doc = queue.shift();
         await processDocument(doc);
+        if (queue.length > 0 && !S.genController.signal.aborted) {
+          document.getElementById('prog-cur').textContent = `Cooling down (rate limit protection)...`;
+          await new Promise(r => setTimeout(r, 2500));
+        }
       }
     })());
   }
