@@ -11,6 +11,11 @@ async function callAI(doc, apiIndex=0, attempt=1, onChunk=null, previousContent=
     throw new Error(`All fallback API profiles exhausted after ${apiIndex} failovers.`);
   }
 
+  // Skip globally dead profiles
+  if (S.apiQueue[apiIndex].isDead) {
+      return callAI(doc, apiIndex + 1, 1, onChunk, previousContent, isContinuation, signal, contextData, false);
+  }
+
   const apiConfig = S.apiQueue[apiIndex];
   const {provider:p, key} = apiConfig;
   let model = apiConfig.model;
@@ -186,32 +191,33 @@ async function callAI(doc, apiIndex=0, attempt=1, onChunk=null, previousContent=
 
     const isAuthError = errStr.includes('401') || errStr.includes('403') || errStr.includes('invalid api key') || errStr.includes('unauthorized') || errStr.includes('api_key');
     const isBadRequest = errStr.includes('400') || errStr.includes('bad request');
+    const isQuotaError = errStr.includes('quota') || errStr.includes('insufficient_quota') || errStr.includes('exceeded');
     const failedName = `${PROV[p]?.name||p} / ${model}`;
     
-    if (isAuthError || isBadRequest) {
+    if (isAuthError || isBadRequest || isQuotaError) {
+      S.apiQueue[apiIndex].isDead = true; // Mark as dead globally
       if (apiIndex + 1 < S.apiQueue.length) {
-        const next = S.apiQueue[apiIndex + 1];
-        showToast(`${failedName} failed (${isAuthError ? 'auth' : 'bad request'}). Falling back...`, 'err');
+        showToast(`${failedName} failed (${isAuthError ? 'auth' : (isQuotaError ? 'quota' : 'bad request')}). Disabling profile...`, 'err');
         return callAI(doc, apiIndex + 1, 1, onChunk, previousContent, isContinuation, signal, contextData);
       }
       return callAI(doc, apiIndex + 1, 1, onChunk, previousContent, isContinuation, signal, contextData);
     }
     
     let isRateLimit = err.message.startsWith('RATE_LIMIT:') || err.message.match(/try again in ([0-9.]+)s/i) || err.message.includes('429') || err.message.toLowerCase().includes('too many requests');
-    let maxAttempts = isRateLimit ? 8 : 5; // Allow more retries for rate limits
+    let maxAttempts = isRateLimit ? 3 : 2; // Reduce from 8 to 3 to force faster fallback
     
     if (attempt < maxAttempts) {
-      let waitTime = Math.pow(2, attempt) * 3000 + Math.random() * 2000;
+      let waitTime = Math.pow(2, attempt) * 2000 + Math.random() * 1000;
       
       if (err.message.startsWith('RATE_LIMIT:')) {
         const ra = parseFloat(err.message.split(':')[1]);
-        if (!isNaN(ra)) waitTime = Math.max((ra * 1000) + 2000, waitTime);
+        if (!isNaN(ra)) waitTime = Math.max((ra * 1000) + 1000, waitTime);
       } else if (err.message.match(/try again in ([0-9.]+)s/i)) {
         const match = err.message.match(/try again in ([0-9.]+)s/i);
         const ra = parseFloat(match[1]);
-        if (!isNaN(ra)) waitTime = Math.max((ra * 1000) + 2000, waitTime);
+        if (!isNaN(ra)) waitTime = Math.max((ra * 1000) + 1000, waitTime);
       } else if (isRateLimit) {
-        waitTime = Math.max(waitTime, 15000); // Minimum 15s wait for generic 429
+        waitTime = Math.max(waitTime, 5000); // Reduce minimum generic wait to 5s to prevent stalling
       }
       
       const waitSec = Math.round(waitTime/1000);
