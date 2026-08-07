@@ -3,92 +3,105 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>RIG — Report Intelligence Generator</title>
+<title>RIG ✦ n8n Agentic Report Engine</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:ital,wght@0,300;0,400;0,500;1,300&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-<script src="https://unpkg.com/html-docx-js/dist/html-docx.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
-<link rel="stylesheet" href="https://unpkg.com/easymde/dist/easymde.min.css">
-<script src="https://unpkg.com/easymde/dist/easymde.min.js"></script>
 <link rel="stylesheet" href="assets/css/index.css">
+<style>
+  /* Custom additions for n8n settings card */
+  .n8n-settings-card {
+    background: linear-gradient(135deg, rgba(26, 27, 38, 0.9) 0%, rgba(16, 17, 24, 0.9) 100%);
+    border: 1px dashed rgba(100, 242, 255, 0.4);
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+  }
+  .status-ticker {
+    font-family: 'DM Mono', monospace;
+    font-size: 13px;
+    color: var(--lime);
+    background: var(--ink3);
+    border: 1px solid var(--wire);
+    border-radius: var(--r8);
+    padding: 16px;
+    height: 180px;
+    overflow-y: auto;
+    margin-top: 14px;
+    text-align: left;
+  }
+  .ticker-line {
+    margin-bottom: 6px;
+    opacity: 0.8;
+  }
+  .ticker-line.active {
+    color: var(--cyan);
+    font-weight: 600;
+    opacity: 1;
+  }
+  .ticker-line.success {
+    color: var(--lime);
+  }
+</style>
 </head>
 <body>
 <nav class="topbar">
-  <a class="logo" href="auth.html"><span class="logo-badge">RIG</span><span class="logo-text">Report Intelligence</span></a>
+  <a class="logo" href="index.html"><span class="logo-badge" style="background:var(--cyan);color:var(--bg)">n8n</span><span class="logo-text">Agentic Report Engine</span></a>
   <div class="step-pills">
     <span class="sp active" id="sp1">01 Details</span>
     <span style="color:var(--wire);font-size:9px">›</span>
     <span class="sp" id="sp2">02 Documents</span>
     <span style="color:var(--wire);font-size:9px">›</span>
-    <span class="sp" id="sp3">03 Generate</span>
+    <span class="sp" id="sp3">03 Generate (n8n)</span>
     <span style="color:var(--wire);font-size:9px">›</span>
     <span class="sp" id="sp4">04 Download</span>
   </div>
   <div class="topbar-right">
-    <a href="https://youtube-transcript-ai-qew9.onrender.com" target="_blank" class="tbtn" style="text-decoration:none; color:var(--cyan); font-weight:700; border-color:rgba(100, 242, 255, 0.3);">YT.AI</a>
     <button class="tbtn" id="btn-theme" onclick="toggleTheme()" style="padding: 7px 10px;" title="Toggle Light/Dark Theme">
       <span id="theme-icon" style="font-size:14px;line-height:1;">☀️</span>
-    </button>
-    <button class="tbtn" onclick="openSettings()" style="padding: 7px 10px;" title="Settings">
-      <span style="font-size:14px;line-height:1;">⚙️</span>
-    </button>
-    <button class="tbtn" id="btn-brand-open" onclick="openBrand()">
-      <span class="tdot" id="brand-dot"></span>
-      <span id="brand-lbl">Branding</span>
-    </button>
-    <button class="tbtn" id="btn-api-open" onclick="openApi()">
-      <span class="tdot" id="api-dot"></span>
-      <span id="api-lbl">API Key</span>
     </button>
   </div>
 </nav>
 
 <div class="page">
   <div class="hero">
-    <div class="hero-tag">✦ AI-Powered Document Engine</div>
-    <h1>Generate a complete<br><em>Report Package</em> in minutes</h1>
-    <p class="hero-sub">Enter your service name, pick from 36 professional documents, brand with your logo — download a complete ZIP ready to send to clients.</p>
-    <div class="hero-stats">
-      <div class="hero-stat"><strong>36</strong>Doc Types</div>
-      <div class="hero-stat"><strong>6</strong>Categories</div>
-      <div class="hero-stat"><strong>4</strong>AI Providers</div>
-      <div class="hero-stat"><strong>🏢</strong>Branded ZIP</div>
-    </div>
+    <div class="hero-tag" style="border-color:var(--cyan);color:var(--cyan)">✦ n8n-Backed Orchestration</div>
+    <h1>Cohesive consulting packages<br><em>written by n8n agents</em></h1>
+    <p class="hero-sub">Generates reports using a structured blueprint to maintain absolute parameter consistency. Rate-limiting and error recovery are handled by the n8n backend.</p>
   </div>
 
   <!-- VIEW 1: DETAILS -->
   <div class="view active" id="view-form">
+    <div class="card n8n-settings-card" style="margin-bottom: 20px;">
+      <div class="card-title" style="color: var(--cyan);">n8n Workflow Configuration</div>
+      <div class="fg">
+        <div class="field fc" style="grid-column:1/-1">
+          <label>n8n Webhook URL *</label>
+          <input type="text" id="n8n-url" placeholder="http://localhost:5678/webhook/generate-reports" style="border-color: rgba(100, 242, 255, 0.3);">
+          <div style="font-size:11px;color:var(--dim);margin-top:6px;">Paste the active production Webhook URL from your imported n8n workflow.</div>
+        </div>
+      </div>
+    </div>
+
     <div class="card">
       <div class="card-title">Service / Project Details</div>
       <div class="fg">
         <div class="field fc">
           <label>Service / Report Name *</label>
-          <input type="text" id="f-name" placeholder="e.g. Water Audit, Energy Audit, ESG Report, FSSAI Compliance Audit...">
+          <input type="text" id="f-name" placeholder="e.g. Water Audit, ESG Compliance, Energy Assessment...">
         </div>
-        <div class="field"><label>Sector / Industry</label><input type="text" id="f-sector" placeholder="e.g. Water & Sanitation, Pharma, Food & Bev" autocomplete="off"></div>
-        <div class="field"><label>Geography / Location</label><input type="text" id="f-geo" placeholder="e.g. Surat, Gujarat, India" autocomplete="off"></div>
-        <div class="field"><label>Client / Organisation</label><input type="text" id="f-client" placeholder="e.g. Surat Municipal Corporation" autocomplete="off"></div>
-        <div class="field"><label>Target Audience</label><input type="text" id="f-audience" placeholder="e.g. Municipal Engineers, VC Investors, Board" autocomplete="off"></div>
-        <div class="field fc"><label>Brief Description / Objective</label><textarea id="f-desc" placeholder="Describe what this service does, its goal, and why it matters..."></textarea></div>
-        <div class="field"><label>Standards / Regulations</label><input type="text" id="f-standards" placeholder="e.g. BIS 10500, WHO, FSSAI, ISO 14001" autocomplete="off"></div>
-        <div class="field"><label>Pricing / Budget Estimate</label><input type="text" id="f-price" placeholder="e.g. ₹2,50,000 or USD 5,000" autocomplete="off"></div>
-        <div class="field"><label>Project Duration</label><input type="text" id="f-duration" placeholder="e.g. 8 weeks, 3 months" readonly onfocus="this.removeAttribute('readonly');" autocomplete="off"></div>
+        <div class="field"><label>Sector / Industry</label><input type="text" id="f-sector" placeholder="e.g. Water & Sanitation, Infrastructure" autocomplete="off"></div>
+        <div class="field"><label>Geography / Location</label><input type="text" id="f-geo" placeholder="e.g. Gujarat, India" autocomplete="off"></div>
+        <div class="field"><label>Client / Organisation</label><input type="text" id="f-client" placeholder="e.g. Municipal Corporation" autocomplete="off"></div>
+        <div class="field"><label>Target Audience</label><input type="text" id="f-audience" placeholder="e.g. Board, Investors, Engineers" autocomplete="off"></div>
+        <div class="field fc"><label>Brief Description / Objective</label><textarea id="f-desc" placeholder="Describe the report's goals, scope, and objective details..."></textarea></div>
+        <div class="field"><label>Standards / Regulations</label><input type="text" id="f-standards" placeholder="e.g. ISO 14001, WHO standards" autocomplete="off"></div>
+        <div class="field"><label>Pricing / Budget Estimate</label><input type="text" id="f-price" placeholder="e.g. ₹3,00,000 or USD 4,000" autocomplete="off"></div>
+        <div class="field"><label>Project Duration</label><input type="text" id="f-duration" placeholder="e.g. 6 weeks, 3 months" autocomplete="off"></div>
         <div class="field"><label>Output Language</label>
-          <select id="f-lang"><option>English</option><option>Hindi</option><option>Gujarati</option><option>Spanish</option><option>French</option><option>Arabic</option><option>Portuguese</option></select>
-        </div>
-        <div class="field" style="grid-column:1/-1">
-          <label>Reference Document (Optional)</label>
-          <div style="display:flex; gap:10px; align-items:center;">
-            <input type="file" id="f-reference" accept=".txt,.md,.json,.csv,.js,.html" style="font-size:12px;color:var(--white);">
-            <span id="ref-status" style="font-size:12px; color:var(--dim);"></span>
-          </div>
-          <div style="font-size:11px;color:var(--dim);margin-top:4px;">Upload a sample report or text file to guide the AI's formatting and style.</div>
+          <select id="f-lang"><option>English</option><option>Hindi</option><option>Gujarati</option><option>Spanish</option><option>French</option></select>
         </div>
       </div>
     </div>
+    
     <div class="btn-row">
       <button class="btn btn-lime btn-full" id="btn-to-docs">
         Continue — Select Documents
@@ -100,9 +113,9 @@
   <!-- VIEW 2: DOCS -->
   <div class="view" id="view-docs">
     <div class="card">
-      <div class="card-title">Choose Documents</div>
+      <div class="card-title">Choose Documents to Generate</div>
       <div class="filter-bar">
-        <span class="fchip active" onclick="filterDocs(this,'all')">All 36</span>
+        <span class="fchip active" onclick="filterDocs(this,'all')">All 45</span>
         <span class="fchip" onclick="filterDocs(this,'overview')">📖 Overview</span>
         <span class="fchip" onclick="filterDocs(this,'planning')">📋 Planning</span>
         <span class="fchip" onclick="filterDocs(this,'operations')">⚙️ Operations</span>
@@ -112,16 +125,16 @@
         <div class="sel-wrap">
           <button class="sel-btn" onclick="selAll(true)">Select All</button>
           <button class="sel-btn" onclick="selAll(false)">Deselect All</button>
-          <span class="sel-count" id="sel-count">36 selected</span>
+          <span class="sel-count" id="sel-count">45 selected</span>
         </div>
       </div>
       <div class="doc-grid" id="doc-grid"></div>
     </div>
     <div class="btn-row">
       <button class="btn btn-ghost" onclick="goTo(1)">← Back</button>
-      <button class="btn btn-lime" style="flex:1;justify-content:center" onclick="startGen()">
-        Generate Package
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+      <button class="btn btn-cyan" style="flex:1;justify-content:center" id="btn-start-n8n" onclick="sendToN8N()">
+        Trigger n8n Agent Workflow
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-left:6px;"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
       </button>
     </div>
   </div>
@@ -129,232 +142,53 @@
   <!-- VIEW 3: GENERATING -->
   <div class="view" id="view-gen">
     <div style="text-align:center;padding:22px 0 28px">
-      <h2 style="font-family:'Syne',sans-serif;font-weight:800;font-size:26px;color:var(--white);margin-bottom:6px">Generating Your Package</h2>
-      <p style="font-size:12px;color:var(--dim)">AI is writing each document — please keep this tab open</p>
+      <h2 style="font-family:'Syne',sans-serif;font-weight:800;font-size:26px;color:var(--white);margin-bottom:6px">n8n Execution in Progress</h2>
+      <p style="font-size:12px;color:var(--dim)">The agentic loop is running on your server. Do not close this page.</p>
     </div>
     <div class="prog-card">
-      <div class="prog-head"><span class="prog-lbl" id="prog-lbl">Initializing...</span><span class="prog-pct" id="prog-pct">0%</span></div>
-      <div class="prog-bg"><div class="prog-fill" id="prog-fill" style="width:0%"></div></div>
-      <div class="prog-cur" id="prog-cur">Setting up generation pipeline...</div>
-    </div>
-    <div class="stats-row">
-      <div class="stat-box"><div class="stat-num" id="cnt-done">0</div><div class="stat-lbl">Complete</div></div>
-      <div class="stat-box"><div class="stat-num warn" id="cnt-gen">0</div><div class="stat-lbl">In Progress</div></div>
-      <div class="stat-box"><div class="stat-num dim" id="cnt-left">—</div><div class="stat-lbl">Remaining</div></div>
-    </div>
-    <div class="stats-row" style="margin-bottom:16px">
-      <div class="stat-box"><div class="stat-num" id="tok-in" style="font-size:22px">0</div><div class="stat-lbl">Input Tokens</div></div>
-      <div class="stat-box"><div class="stat-num" id="tok-out" style="font-size:22px;color:var(--cyan)">0</div><div class="stat-lbl">Output Tokens</div></div>
-      <div class="stat-box">
-        <div class="stat-num" id="tok-total" style="font-size:22px;color:var(--warn)">0</div>
-        <div class="stat-lbl">Total Tokens</div>
-        <div id="cost-est" style="font-size:10px;color:var(--lime);margin-top:4px;font-weight:600;">$0.00</div>
+      <div class="prog-head"><span class="prog-lbl" id="prog-lbl">Orchestrating...</span></div>
+      <div class="prog-bg"><div class="prog-fill" id="prog-fill" style="width:0%; background:var(--cyan)"></div></div>
+      <div class="status-ticker" id="status-ticker">
+        <div class="ticker-line active">Starting pipeline...</div>
       </div>
-    </div>
-    <div class="gen-grid" id="gen-grid" style="margin-top:16px;"></div>
-    <div class="btn-row" style="margin-top:22px; justify-content:center;">
-      <button class="btn btn-ghost" id="btn-cancel-gen" onclick="cancelGen()" style="color:var(--rose);border-color:rgba(242,65,120,0.3);">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-right:6px;"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-        Cancel Generation
-      </button>
     </div>
   </div>
 
   <!-- VIEW 4: RESULTS -->
   <div class="view" id="view-done">
-    <div class="results-head">
-      <div>
-        <h2>Package Ready ✦</h2>
-        <p style="font-size:11px;color:var(--dim);margin-top:4px">Click any document to preview • Download all as ZIP</p>
-      </div>
-      <div class="dl-actions">
-        <button class="btn btn-ghost" onclick="restart()">New Package</button>
-        <button class="btn btn-ghost" onclick="downloadPdf()" id="btn-pdf" style="color:var(--white);">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
-          Download PDF
-        </button>
-        <button class="btn btn-cyan" onclick="downloadZip()" id="btn-zip">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          Download ZIP
+    <div class="card" style="text-align: center; padding: 40px 20px;">
+      <span style="font-size: 60px; line-height: 1;">📦</span>
+      <h2 style="font-family:'Syne',sans-serif; font-weight:800; font-size:28px; color:var(--white); margin: 20px 0 10px;">Package Complete</h2>
+      <p style="font-size: 14px; color: var(--dim); max-width: 480px; margin: 0 auto 30px;">
+        n8n has generated the master blueprint, created all documents sequentially, and compressed them into a structured ZIP archive.
+      </p>
+      
+      <div style="display: flex; gap: 12px; justify-content: center;">
+        <button class="btn btn-ghost" onclick="restart()">Generate New Package</button>
+        <button class="btn btn-lime" id="btn-download-result">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-right:6px;"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Download Zipped Reports
         </button>
       </div>
-    </div>
-    <div class="stats-row" style="grid-template-columns:repeat(6,1fr)">
-      <div class="stat-box"><div class="stat-num" id="r-docs">0</div><div class="stat-lbl">Documents</div></div>
-      <div class="stat-box"><div class="stat-num" id="r-words">—</div><div class="stat-lbl">Est. Words</div></div>
-      <div class="stat-box"><div class="stat-num" id="r-time">—</div><div class="stat-lbl">Gen Time</div></div>
-      <div class="stat-box"><div class="stat-num" id="r-tok-in" style="font-size:22px">0</div><div class="stat-lbl">Input Tokens</div></div>
-      <div class="stat-box"><div class="stat-num" id="r-tok-out" style="font-size:22px;color:var(--cyan)">0</div><div class="stat-lbl">Output Tokens</div></div>
-      <div class="stat-box">
-        <div class="stat-num" id="r-tok-total" style="font-size:22px;color:var(--warn)">0</div>
-        <div class="stat-lbl">Total Tokens</div>
-        <div id="r-cost-est" style="font-size:10px;color:var(--lime);margin-top:4px;font-weight:600;">$0.00</div>
-      </div>
-    </div>
-    <div class="final-grid" id="final-grid"></div>
-    <div class="preview-panel">
-      <div class="pv-head">
-        <span class="pv-title" id="pv-title">Select a document to preview</span>
-        <div style="display:flex;gap:8px;">
-          <button class="btn-copy" id="btn-edit-pv" onclick="toggleEditPv()" style="display:none;">Edit</button>
-          <button class="btn-copy" onclick="copyPv()">Copy</button>
-        </div>
-      </div>
-      <div class="pv-content" id="pv-content" style="padding-bottom:20px;line-height:1.6;color:var(--white);"><div class="pv-placeholder">← Click any document card above to preview its content</div></div>
-      <textarea class="pv-edit" id="pv-edit" style="display:none;width:100%;height:calc(100% - 40px);background:var(--bg2);color:var(--white);border:none;padding:16px;font-family:monospace;font-size:13px;resize:none;outline:none;"></textarea>
-    </div>
-    <div id="zip-status" style="font-size:11px;color:var(--dim);text-align:center;margin-top:6px"></div>
-  </div>
-</div>
-
-<!-- API MODAL -->
-<div class="overlay" id="api-overlay" onclick="handleOv(event,'api-overlay',closeApi)">
-  <div class="modal modal-api">
-    <div class="modal-head">
-      <div><h3>Configure API Fallbacks</h3><p>Set multiple providers. If the primary fails, RIG falls back to the next.</p></div>
-      <button class="modal-x" onclick="closeApi()">✕</button>
-    </div>
-    <div class="modal-body" style="padding-bottom:10px">
-      <!-- Queue list card -->
-      <div style="background:var(--ink3);border:1px solid var(--wire);border-radius:var(--r12);padding:14px;margin-bottom:14px">
-        <div style="font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:10px;font-weight:500">Fallback Queue</div>
-        <div id="api-queue-list" style="max-height:200px;overflow-y:auto"></div>
-      </div>
-      <!-- Add provider card -->
-      <div style="background:var(--ink3);border:1px solid var(--wire);border-radius:var(--r12);padding:14px">
-        <div style="font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:10px;font-weight:500">Add Provider</div>
-        <div class="ptabs" id="ptabs" style="margin-bottom:12px; display:flex; flex-wrap:wrap; gap:6px;">
-          <span class="ptab active" data-p="anthropic" onclick="switchProv(this,'anthropic')">Anthropic</span>
-          <span class="ptab" data-p="openai" onclick="switchProv(this,'openai')">OpenAI</span>
-          <span class="ptab" data-p="gemini" onclick="switchProv(this,'gemini')">Gemini</span>
-          <span class="ptab" data-p="openrouter" onclick="switchProv(this,'openrouter')">OpenRouter</span>
-          <span class="ptab" data-p="groq" onclick="switchProv(this,'groq')">Groq</span>
-          <span class="ptab" data-p="deepseek" onclick="switchProv(this,'deepseek')">DeepSeek</span>
-        </div>
-        <div class="api-wrap" style="margin-bottom:10px">
-          <input type="password" id="api-key-inp" placeholder="Paste your API key...">
-          <button class="eye" onclick="toggleEye()" id="eye-btn">👁</button>
-        </div>
-        <div class="model-row" style="margin-bottom:10px"><label>Model</label><select id="model-sel"></select></div>
-        <div class="api-note" id="api-note" style="margin-bottom:12px"></div>
-        <button class="btn btn-cyan btn-full" onclick="addApiToQueue()">+ Add to Queue</button>
-      </div>
-    </div>
-    <div class="modal-foot">
-      <button class="btn btn-lime" onclick="closeApi()" style="flex:1;justify-content:center">Done</button>
-    </div>
-  </div>
-</div>
-
-<!-- SETTINGS MODAL -->
-<div class="overlay" id="settings-overlay" onclick="handleOv(event,'settings-overlay',closeSettings)">
-  <div class="modal modal-brand">
-    <div class="modal-head">
-      <div><h3>Prompt Settings</h3><p>Override the default AI instructions and behavior.</p></div>
-      <button class="modal-x" onclick="closeSettings()">✕</button>
-    </div>
-    <div class="modal-body" style="padding-top:26px;padding-bottom:10px">
-      <div style="background:var(--ink3);border:1px solid var(--wire);border-radius:var(--r12);padding:14px;margin-bottom:16px">
-        <div style="font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:10px;font-weight:500">Engine Configuration</div>
-        <div class="wm-row" style="margin-bottom:8px">
-          <input type="checkbox" id="s-degrade" style="margin-right:8px">
-          <label for="s-degrade" style="cursor:pointer;font-size:13px">Enable Model Degradation <span style="font-size:11px;color:var(--dim);display:block;margin-top:2px">If rate limited, fallback to lighter models (e.g., 8b/flash) before switching providers.</span></label>
-        </div>
-        <div class="wm-row">
-          <input type="checkbox" id="s-rotate" style="margin-right:8px">
-          <label for="s-rotate" style="cursor:pointer;font-size:13px">Enable API Key Rotation <span style="font-size:11px;color:var(--dim);display:block;margin-top:2px">Automatically round-robin between keys of the same provider to avoid rate limits.</span></label>
-        </div>
-      </div>
-      <div class="field fc" style="margin-bottom:16px">
-        <label style="margin-bottom:8px">System Persona</label>
-        <textarea id="s-persona" style="min-height:120px;line-height:1.7"></textarea>
-      </div>
-      <div class="field fc" style="margin-bottom:10px">
-        <label style="margin-bottom:8px">Output Directives</label>
-        <textarea id="s-directives" style="min-height:170px;line-height:1.7"></textarea>
-      </div>
-    </div>
-    <div class="modal-foot" style="padding-top:14px">
-      <button class="btn btn-ghost" onclick="closeSettings()" style="flex:1;justify-content:center">Cancel</button>
-      <button class="btn btn-cyan" onclick="saveSettings()" style="flex:2;justify-content:center">Save Settings</button>
-    </div>
-  </div>
-</div>
-
-<!-- BRAND MODAL -->
-<div class="overlay" id="brand-overlay" onclick="handleOv(event,'brand-overlay',closeBrand)">
-  <div class="modal modal-brand">
-    <div class="modal-head">
-      <div><h3 id="brand-modal-title">Company Branding</h3><p id="brand-modal-sub">Manage your branding profiles. Select one to use in generated documents.</p></div>
-      <button class="modal-x" onclick="closeBrand()">✕</button>
-    </div>
-
-    <!-- BRAND LIST VIEW -->
-    <div class="modal-body" id="brand-list-view">
-      <div id="brand-profiles-list"></div>
-      <button class="btn btn-lime btn-full" onclick="showBrandForm(-1)" style="margin-top:14px">
-        + Add New Branding Profile
-      </button>
-    </div>
-    <div class="modal-foot" id="brand-list-foot">
-      <button class="btn btn-ghost" onclick="closeBrand()" style="flex:1;justify-content:center">Close</button>
-    </div>
-
-    <!-- BRAND EDIT FORM VIEW -->
-    <div class="modal-body" id="brand-form-view" style="display:none">
-      <!-- Logo -->
-      <div class="sect-label">Company Logo</div>
-      <label class="brand-logo-upload" id="logo-upload-label">
-        <input type="file" accept="image/*" onchange="handleLogo(this)">
-        <div class="logo-placeholder">🏢</div>
-        <div style="font-size:12px;color:var(--snow);font-weight:500;margin-bottom:3px" id="logo-upload-text">Click to upload logo</div>
-        <div style="font-size:11px;color:var(--dim)">PNG, JPG, SVG — appears on all documents</div>
-        <img id="logo-img-prev" class="logo-img-preview" alt="Logo">
-      </label>
-
-      <!-- Company Info -->
-      <div class="sect-label">Company Information</div>
-      <div class="brand-fg">
-        <div class="field"><label>Company Name *</label><input type="text" id="b-cname" placeholder="e.g. AquaTech Solutions Pvt. Ltd."></div>
-        <div class="field"><label>Company Email</label><input type="email" id="b-email" placeholder="e.g. info@aquatech.in"></div>
-        <div class="field"><label>Phone / WhatsApp</label><input type="text" id="b-phone" placeholder="e.g. +91 98765 43210"></div>
-        <div class="field"><label>Website</label><input type="text" id="b-web" placeholder="e.g. www.aquatech.in"></div>
-        <div class="field" style="grid-column:1/-1"><label>Address / Tagline</label><input type="text" id="b-addr" placeholder="e.g. Surat, Gujarat | Pioneering Water Intelligence"></div>
-      </div>
-
-      <!-- Watermark -->
-      <div class="sect-label">Document Watermark</div>
-      <div class="wm-row">
-        <input type="checkbox" id="wm-enable" onchange="document.getElementById('wm-type').disabled=!this.checked">
-        <label for="wm-enable" style="cursor:pointer">Add watermark to all documents</label>
-        <select id="wm-type" disabled>
-          <option>CONFIDENTIAL</option>
-          <option>PROPRIETARY</option>
-          <option>DRAFT</option>
-          <option>INTERNAL USE ONLY</option>
-          <option>DO NOT DISTRIBUTE</option>
-        </select>
-      </div>
-    </div>
-    <div class="modal-foot" id="brand-form-foot" style="display:none">
-      <button class="btn btn-ghost" onclick="showBrandList()" style="flex:1;justify-content:center">← Back</button>
-      <button class="btn btn-cyan" onclick="saveBrand()" style="flex:2;justify-content:center">Save Branding</button>
     </div>
   </div>
 </div>
 
 <div class="toast" id="toast"><span class="t-icon" id="t-icon">✓</span><span id="t-msg"></span></div>
 
-<script src="assets/js/store.js"></script>
-<script src="assets/js/prompts.js"></script>
-<script src="assets/js/api.js"></script>
-<script src="assets/js/export.js"></script>
-<script src="assets/js/ui.js"></script>
-<script src="assets/js/main.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+<script src="assets/js/n8n_client.js"></script>
 <script>
-  if (typeof mermaid !== 'undefined') {
-    mermaid.initialize({ startOnLoad: false, theme: 'dark' });
+  // Simple light/dark theme helper local overrides
+  function toggleTheme() {
+    document.body.classList.toggle('light-theme');
+    const isLight = document.body.classList.contains('light-theme');
+    localStorage.setItem('rig_theme', isLight ? 'light' : 'dark');
+    document.getElementById('theme-icon').textContent = isLight ? '🌙' : '☀️';
+  }
+  
+  if (localStorage.getItem('rig_theme') === 'light') {
+    document.body.classList.add('light-theme');
+    document.getElementById('theme-icon').textContent = '🌙';
   }
 </script>
 </body>
