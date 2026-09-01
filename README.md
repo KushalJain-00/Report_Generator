@@ -1,72 +1,116 @@
-# RIG — Report Intelligence Generator (Agentic Offline Edition)
+# RIG — Report Intelligence Generator
 
-RIG is an advanced AI-powered report generation dashboard that leverages **n8n** and local Large Language Models (LLMs) to automatically generate professional, interconnected consulting documents. 
+> One-command local app for generating 45 professional consulting documents with AI
 
-This repository contains everything you need to run the entire pipeline **100% offline** and for **free** on your own computer without any API limits or costs.
+## Quick Start
 
-## 🚀 Recommended Offline LLM
+```bash
+pip install -r requirements.txt
+python app.py
+```
 
-To run this smoothly on a standard PC without lag, we highly recommend using **Ollama** with the **Llama 3 (8B)** or **Qwen2.5 (7B)** model. 
-These models are incredibly fast, take up very little disk space (~4.7GB), and run comfortably on machines with 8GB to 16GB of RAM.
+Open http://localhost:8000 — that's it.
 
-- **Recommended Model:** `llama3` or `qwen2.5:7b`
-- **Why?** It strikes the perfect balance between high-quality document generation and low resource usage.
+### Without Ollama (cloud only)
 
----
+1. Get a free API key from [Groq](https://console.groq.com), [OpenRouter](https://openrouter.ai), or [Google AI Studio](https://aistudio.google.com/apikey)
+2. Run `python app.py`
+3. Select provider in the dashboard, paste your key, generate
 
-## 🛠️ Complete Setup Guide for Clients
+### With Ollama (fully offline)
 
-Follow these steps to get the entire system running locally on your machine.
+```bash
+# Install Ollama
+curl -fsSL https://ollama.com/install.sh | sh
 
-### Step 1: Install Ollama (Local AI Engine)
-1. Go to [ollama.com](https://ollama.com/) and download the installer for your OS (Windows, Mac, or Linux).
-2. Install the application.
-3. Open your Terminal (Mac/Linux) or Command Prompt (Windows).
-4. Run the following command to download the AI model:
-   ```bash
-   ollama run llama3
-   ```
-   *(This will download the model. Once you see a prompt `>>>`, you can close the terminal or type `/bye`. Ollama is now running in the background).*
+# Pull a model
+ollama pull llama3
 
-### Step 2: Install & Start n8n (Orchestration Engine)
-n8n is the engine that connects the website to your local AI. You can run it easily using `npm` (if you have Node.js installed) or Docker.
+# Run RIG
+python app.py
+```
 
-**Option A: Using Node.js (Easiest)**
-1. Ensure you have [Node.js](https://nodejs.org/) installed.
-2. Open your terminal and run:
-   ```bash
-   npx n8n
-   ```
-3. n8n will start and open in your browser at `http://localhost:5678`.
+## How It Works
 
-### Step 3: Import the RIG Workflow
-1. Open n8n in your browser (`http://localhost:5678`).
-2. Follow the setup screens to create a local owner account.
-3. Go to **Workflows** → **Add Workflow**.
-4. In the top right corner, click the **... (options)** button and select **Import from File**.
-5. Select the `n8n_workflow.json` file located in this repository.
-6. The workflow will appear on your screen!
+1. **Select provider** — Groq (fast), Ollama (local), OpenRouter, or Gemini (free)
+2. **Fill project details** — name, sector, client, description
+3. **Pick documents** — choose from 45 consulting templates
+4. **Generate** — app creates a blueprint, then generates each doc with retry + fallback
+5. **Preview & download** — preview individual docs, then download ZIP with markdown + HTML
 
-### Step 4: Configure the Local AI Node
-1. In your n8n workflow, double-click the **Ollama** node (or the Basic LLM node).
-2. Set the Base URL to `http://localhost:11434` (This is where Ollama runs).
-3. Set the Model name to `llama3`.
-4. Close the node settings.
-5. **CRITICAL:** Click the toggle switch at the top right of n8n to set the workflow to **Active**.
-6. Double-click the **Webhook** node at the very start of the workflow. Change the environment to "Production" and copy the **Production URL** (it should look like `http://localhost:5678/webhook/generate-reports`).
+### Provider Fallback Chain
 
-### Step 5: Run the Dashboard
-1. You do not need a web server! Simply double-click the `index.html` file in this folder to open it in your web browser (Chrome/Edge/Safari).
-2. In the "n8n Webhook URL" field on the website, paste the URL you copied from Step 4.
-3. Fill in your project details, select the documents you want to generate, and click **Trigger n8n Agent Workflow**.
+If one provider hits rate limits, the next one picks up. Each provider gets 3 retry attempts with exponential backoff.
 
-🎉 **That's it!** The website will send the request to n8n, which will orchestrate `llama3` to write your documents, zip them up, and prompt you to download the completed package.
+## Architecture
 
----
+```
+python app.py (single file)
+├── FastAPI backend
+│   ├── POST /api/generate  → starts generation job
+│   ├── GET  /api/status/{id} → progress polling (with doc content)
+│   └── GET  /api/download/{id} → ZIP download
+├── LLM provider routing (Groq / Ollama / OpenRouter / Gemini)
+├── Retry + fallback logic
+├── ZIP packaging
+└── Serves frontend (index.html + assets/)
+```
 
-## 📁 Repository Structure
-* `index.html` — The main dashboard UI.
-* `assets/css/index.css` — Styling and glassmorphism UI.
-* `assets/js/n8n_client.js` — Client-side logic for connecting the UI to the n8n webhook.
-* `n8n_workflow.json` — The complete agentic pipeline configuration for n8n.
-* `README.md` — This setup guide.
+## Files
+
+```
+├── app.py              # Backend (FastAPI) — the entire server
+├── index.html          # Frontend dashboard
+├── requirements.txt    # Python dependencies
+├── assets/
+│   ├── css/index.css   # Styles
+│   └── js/app.js          # Frontend logic
+├── run.sh              # One-click start script
+├── setup.sh            # Full setup (venv + deps + optional Ollama)
+└── docker-compose.yml  # Optional: Docker deployment
+```
+
+## Document Types (45)
+
+| Category | Count | Examples |
+|----------|-------|---------|
+| Overview | 6 | Brief Overview, Case Study, Dashboard |
+| Planning | 7 | Charter, Scope of Work, Risk Register |
+| Operations | 12 | SOP, Methodology, Compliance Check |
+| Data & Field | 8 | Data Collection, Interview Guide |
+| Business | 4 | Pricing, Quotation, Business Plan |
+| Marketing | 7 | Pitch Deck, Email Content, Marketing Plan |
+
+## API
+
+```bash
+# Start generation
+curl -X POST http://localhost:8000/api/generate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "provider": "groq",
+    "groqKey": "gsk_...",
+    "metadata": {"name": "Water Audit", "desc": "Comprehensive audit"},
+    "documents": [{"id": "overview", "name": "Brief Overview", "cat": "overview"}]
+  }'
+# Returns: {"jobId": "a1b2c3d4"}
+
+# Check progress
+curl http://localhost:8000/api/status/a1b2c3d4
+
+# Download when done
+curl -o output.zip http://localhost:8000/api/download/a1b2c3d4
+```
+
+## Troubleshooting
+
+| Error | Fix |
+|-------|-----|
+| `Connection refused` on Ollama | Run `ollama serve` in another terminal |
+| `429 Too Many Requests` | Normal with free tiers — retry logic handles it automatically |
+| `ModuleNotFoundError` | Run `pip install -r requirements.txt` |
+| Port 8000 in use | `lsof -i :8000` to find what's using it |
+
+## License
+
+MIT
