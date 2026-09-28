@@ -39,6 +39,8 @@ def test_generate_malformed_document_entry_422():
     body = make_body()
     body["documents"] = [{}]
     assert client.post("/api/generate", json=body).status_code == 422
+    body["documents"] = [{"id": []}]
+    assert client.post("/api/generate", json=body).status_code == 422
 
 
 def test_full_roundtrip(monkeypatch):
