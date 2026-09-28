@@ -3,10 +3,14 @@ from rig import providers
 
 
 @pytest.fixture(autouse=True)
-def fast_sleep(monkeypatch):
-    async def _fake_sleep(_seconds):
-        return None
+def sleeps(monkeypatch):
+    recorded = []
+
+    async def _fake_sleep(seconds):
+        recorded.append(seconds)
+
     monkeypatch.setattr(providers.asyncio, "sleep", _fake_sleep)
+    return recorded
 
 
 def make_cfg(**over):
@@ -34,7 +38,7 @@ def test_primary_success(monkeypatch):
     assert (content, prov) == ("hello world", "groq")
 
 
-def test_429_rotates_keys_then_provider(monkeypatch):
+def test_429_rotates_keys_then_provider(monkeypatch, sleeps):
     calls = []
     async def fake(client, key, model, prompt, system, temp, on_token):
         calls.append(key)
@@ -50,10 +54,14 @@ def test_429_rotates_keys_then_provider(monkeypatch):
     content, prov = asyncio.run(providers.call_llm(cfg, "p", "s", 0.7))
     assert content == "from-ollama"
     assert calls == ["k1", "k2", None]  # both keys tried, then ollama
+    assert sleeps == []  # 429 rotates immediately — no sleep
 
 
 def test_disabled_provider_skipped(monkeypatch):
+    dispatched = []
+
     async def boom(*a, **k):
+        dispatched.append("groq")
         raise AssertionError("should not be called")
     monkeypatch.setitem(providers.CALLERS, "groq", boom)
     async def ok(client, key, model, prompt, system, temp, on_token):
@@ -63,6 +71,7 @@ def test_disabled_provider_skipped(monkeypatch):
     import asyncio
     content, prov = asyncio.run(providers.call_llm(cfg, "p", "s", 0.7))
     assert prov == "ollama"
+    assert dispatched == []
 
 
 def test_all_fail_raises(monkeypatch):

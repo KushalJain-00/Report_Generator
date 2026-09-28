@@ -154,10 +154,9 @@ async def call_llm(cfg: dict, prompt: str, system: str, temp: float,
                     result = await caller(client, key, model, prompt, system, temp, on_token)
                     return result, prov
                 except RateLimited:
-                    wait = 15 * attempt
-                    log(f"{prov} key#{key_idx + 1}: rate limited, waiting {wait}s", "error")
-                    errors.append(f"{prov} key#{key_idx + 1}: rate limited, waited {wait}s")
-                    await asyncio.sleep(wait)
+                    # controller ruling: 429 rotates to the next key immediately, no wait
+                    log(f"{prov} key#{key_idx + 1}: rate limited, rotating", "error")
+                    errors.append(f"{prov} key#{key_idx + 1}: rate limited")
                     break  # rate-limited key is spent — rotate to the next key
                 except Exception as e:
                     err_msg = str(e)
