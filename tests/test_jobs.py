@@ -56,3 +56,28 @@ def test_live_preview_fields_cleared_when_done(monkeypatch):
     job = jobs.jobs[jid]
     assert job["currentContent"] == ""
     assert job["currentDocName"] == ""
+
+
+def test_preview_not_garbled_when_attempt_retries(monkeypatch):
+    jid = jobs.create_job(PROJECT, DOCS[:1], LLM, {})
+    job = jobs.jobs[jid]
+    snapshots = []
+
+    async def fake(cfg, prompt, system, temp, on_token=None, on_log=None):
+        if "Project Blueprint" in prompt:
+            return '{"projectTitle": "P", "executiveObjective": "o", "coreMethodologies": [], "primaryLocation": "G", "mainStakeholders": [], "keyMilestones": [], "priceSummary": "1", "industryContext": "", "complianceFramework": []}', "groq"
+        try:
+            if on_token:
+                on_token("# attempt 1 partial")
+            raise RuntimeError("transient")
+        except RuntimeError:
+            pass  # providers.call_llm retry loop — attempt 2 starts fresh
+        if on_token:
+            on_token("# attempt 2 final")
+        snapshots.append(job["currentContent"])
+        return "# attempt 2 final", "groq"
+
+    monkeypatch.setattr(jobs, "call_llm", fake)
+    asyncio.run(jobs.run_job(jid))
+    assert snapshots == ["# attempt 2 final"]
+    assert job["currentContent"] == ""

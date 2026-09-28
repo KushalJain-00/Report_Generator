@@ -93,7 +93,7 @@ Professional consulting tone. No placeholders. Full content."""
 
     def on_token(chunk: str):
         if job:
-            job["currentContent"] += chunk
+            job["currentContent"] = chunk  # cumulative assign — retry overwrites partial
 
     safe = doc["name"].replace(" ", "_").replace("/", "_")
     cat = doc.get("cat", "general").upper()

@@ -35,6 +35,12 @@ def test_generate_unknown_doc_422():
     assert client.post("/api/generate", json=body).status_code == 422
 
 
+def test_generate_malformed_document_entry_422():
+    body = make_body()
+    body["documents"] = [{}]
+    assert client.post("/api/generate", json=body).status_code == 422
+
+
 def test_full_roundtrip(monkeypatch):
     patch_llm(monkeypatch)
     r = client.post("/api/generate", json=make_body())

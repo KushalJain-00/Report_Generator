@@ -55,7 +55,7 @@ async def _openai_compat(client, base_url, key, model, prompt, system, temp, on_
                     continue
                 if token:
                     content += token
-                    on_token(token)
+                    on_token(content)  # cumulative so-far — preview assign contract
             return content
     r = await client.post(f"{base_url}/chat/completions", headers=headers, json=payload)
     if r.status_code == 429:

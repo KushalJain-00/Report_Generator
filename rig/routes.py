@@ -37,7 +37,7 @@ class GenerateRequest(BaseModel):
 
 @app.post("/api/generate")
 async def start_generation(req: GenerateRequest, bg: BackgroundTasks):
-    docs = validate_docs([d["id"] for d in req.documents])
+    docs = validate_docs([d.get("id") for d in req.documents if isinstance(d, dict)])
     meta = req.metadata
     project = {
         "name": meta.get("name", "Unnamed"),

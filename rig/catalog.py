@@ -54,7 +54,7 @@ def validate_docs(ids: list[str]) -> list[dict]:
     by_id = {d["id"]: d for d in DOCS}
     missing = [i for i in ids if i not in by_id]
     if missing:
-        raise HTTPException(422, f"Unknown document ids: {', '.join(missing)}")
+        raise HTTPException(422, f"Unknown document ids: {', '.join(str(i) for i in missing)}")
     if not ids:
         raise HTTPException(422, "No documents selected")
     return [by_id[i] for i in ids]
