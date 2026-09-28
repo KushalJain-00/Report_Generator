@@ -25,7 +25,7 @@ class GenerateRequest(BaseModel):
     groqKeys: list = []
     groqModel: str = "qwen/qwen3.8-27b"
     openrouterKeys: list = []
-    openrouterModel: str = "meta-llama/llama-3-8b-instruct:free"
+    openrouterModel: str = "nvidia/nemotron-3-ultra-550b-a55b:free"  # keep in sync with assets/js/app.js defaultModel
     geminiKeys: list = []
     geminiModel: str = "gemini-2.5-flash"
     fallbackOrder: list = ["groq", "gemini", "ollama", "openrouter"]

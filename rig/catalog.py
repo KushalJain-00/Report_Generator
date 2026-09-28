@@ -50,7 +50,7 @@ DOCS: list[dict] = [
 ]
 
 
-def validate_docs(ids: list[str]) -> list[dict]:
+def validate_docs(ids: list[str | None]) -> list[dict]:
     by_id = {d["id"]: d for d in DOCS}
     missing = [i for i in ids if not isinstance(i, str) or i not in by_id]
     if missing:
