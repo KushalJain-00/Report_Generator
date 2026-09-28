@@ -48,23 +48,95 @@ const DOCS = [
 const PROVIDERS = {
   groq:{name:'Groq',models:['qwen/qwen3.8-27b','qwen/qwen3.6-27b','allam-2-7b','openai/gpt-oss-120b'],defaultModel:'qwen/qwen3.8-27b',needsKey:true},
   ollama:{name:'Ollama',models:['llama3','llama3:8b','llama3:70b','qwen2.5:7b','qwen2.5:14b','mistral','phi3','gemma2'],defaultModel:'llama3',needsKey:false,defaultUrl:'http://localhost:11434'},
-  openrouter:{name:'OpenRouter',models:['meta-llama/llama-3-8b-instruct:free','meta-llama/llama-3-70b-instruct:free','mistralai/mistral-7b-instruct:free','google/gemma-2-9b-it:free','qwen/qwen-2-7b-instruct:free','openai/gpt-4o-mini','anthropic/claude-3.5-sonnet'],defaultModel:'meta-llama/llama-3-8b-instruct:free',needsKey:true},
+  openrouter:{name:'OpenRouter',models:['nvidia/nemotron-3-ultra-550b-a55b:free','qwen/qwen3-coder-480b-a35b:free','nvidia/nemotron-3-super-120b-a12b:free','openai/gpt-oss-120b:free','google/gemma-4-31b-it:free','nvidia/nemotron-3-nano-30b-a3b:free','meta-llama/llama-3-8b-instruct:free'],defaultModel:'nvidia/nemotron-3-ultra-550b-a55b:free',needsKey:true},
   gemini:{name:'Gemini',models:['gemini-2.5-flash','gemini-2.5-flash-lite','gemini-2.5-pro','gemini-flash-latest'],defaultModel:'gemini-2.5-flash',needsKey:true}
 };
 
 const S={selected:new Set(DOCS.map(d=>d.id)),filter:'all',blobUrl:null,provider:'groq',generatedFiles:[],previewIndex:null};
 const CAT_ICONS={overview:'\u{1F4D6}',planning:'\u{1F4CB}',operations:'\u2699\uFE0F',data:'\u{1F4CA}',business:'\u{1F4BC}',marketing:'\u{1F4E3}'};
+const DEFAULT_FALLBACK=['openrouter','groq','gemini','ollama'];
 
-/* ── KEY STORAGE ──────────────────────────────────────── */
-function loadKeys(provider){
-  try{return JSON.parse(localStorage.getItem('rig_keys_'+provider))||[]}catch(e){return[]}
+/* ── SETTINGS ─────────────────────────────────────────── */
+function loadSettings(){
+  try{return JSON.parse(localStorage.getItem('rig_settings'))||null}catch(e){return null}
 }
-function saveKeys(provider,keys){
-  localStorage.setItem('rig_keys_'+provider,JSON.stringify(keys));
+function saveSettings(s){localStorage.setItem('rig_settings',JSON.stringify(s))}
+function getSettings(){
+  var saved=loadSettings();
+  return saved||{fallbackOrder:DEFAULT_FALLBACK.slice(),enabled:{openrouter:true,groq:false,gemini:false,ollama:false},
+    keys:{groq:[],gemini:[],openrouter:[]},
+    models:{groq:PROVIDERS.groq.defaultModel,gemini:PROVIDERS.gemini.defaultModel,openrouter:PROVIDERS.openrouter.defaultModel,ollama:PROVIDERS.ollama.defaultModel},
+    ollamaUrl:'http://localhost:11434',
+    watermark:{text:'',opacity:0.15,fontSize:48}};
 }
-function getKeysFromInput(){
-  var raw=document.getElementById('f-apikey').value;
-  return raw.split('\n').map(function(k){return k.trim()}).filter(function(k){return k.length>0});
+function parseKeys(text){return text.split('\n').map(function(k){return k.trim()}).filter(function(k){return k.length>0})}
+
+/* ── DRAWER ───────────────────────────────────────────── */
+function openDrawer(){
+  var s=getSettings();
+  document.getElementById('s-ollama-url').value=s.ollamaUrl||'http://localhost:11434';
+  document.getElementById('s-groq-keys').value=(s.keys.groq||[]).join('\n');
+  document.getElementById('s-gemini-keys').value=(s.keys.gemini||[]).join('\n');
+  document.getElementById('s-openrouter-keys').value=(s.keys.openrouter||[]).join('\n');
+  populateModelSelect('s-groq-model','groq',s.models.groq);
+  populateModelSelect('s-gemini-model','gemini',s.models.gemini);
+  populateModelSelect('s-openrouter-model','openrouter',s.models.openrouter);
+  renderFallbackList(s.fallbackOrder,s.enabled);
+  var wm=s.watermark||{};
+  document.getElementById('s-wm-text').value=wm.text||'';
+  document.getElementById('s-wm-opacity').value=wm.opacity||0.15;
+  document.getElementById('s-wm-fontsize').value=wm.fontSize||48;
+  switchProvider(S.provider);
+  document.getElementById('settings-drawer').classList.add('open');
+  document.getElementById('drawer-overlay').classList.add('open');
+}
+function closeDrawer(){
+  document.getElementById('settings-drawer').classList.remove('open');
+  document.getElementById('drawer-overlay').classList.remove('open');
+}
+function populateModelSelect(id,provider,selected){
+  var el=document.getElementById(id);if(!el)return;
+  var cfg=PROVIDERS[provider];
+  el.innerHTML=cfg.models.map(function(m){return '<option value="'+m+'"'+(m===selected?' selected':'')+'>'+m+'</option>'}).join('');
+}
+
+/* ── FALLBACK DRAG-TO-REORDER ─────────────────────────── */
+var dragItem=null;
+function renderFallbackList(order,enabled){
+  var list=document.getElementById('fallback-list');if(!list)return;
+  list.innerHTML=order.map(function(p){
+    var cfg=PROVIDERS[p];if(!cfg)return'';
+    var isOn=enabled[p]!==false;
+    return '<div class="fallback-item" draggable="true" data-prov="'+p+'">'+
+      '<span class="drag-handle">\u2630</span>'+
+      '<span class="fb-name">'+cfg.name+'</span>'+
+      '<label class="fb-toggle"><input type="checkbox" data-enable="'+p+'"'+(isOn?' checked':'')+'><span class="slider"></span></label>'+
+    '</div>';
+  }).join('');
+
+  list.querySelectorAll('.fallback-item').forEach(function(el){
+    el.addEventListener('dragstart',function(e){dragItem=el;el.classList.add('dragging');e.dataTransfer.effectAllowed='move'});
+    el.addEventListener('dragend',function(){el.classList.remove('dragging');dragItem=null});
+    el.addEventListener('dragover',function(e){e.preventDefault();e.dataTransfer.dropEffect='move'});
+    el.addEventListener('drop',function(e){
+      e.preventDefault();
+      if(dragItem&&dragItem!==el){
+        var items=Array.from(list.children);
+        var from=items.indexOf(dragItem),to=items.indexOf(el);
+        if(from<to)list.insertBefore(dragItem,el.nextSibling);
+        else list.insertBefore(dragItem,el);
+      }
+    });
+  });
+}
+function getFallbackOrder(){
+  var list=document.getElementById('fallback-list');if(!list)return DEFAULT_FALLBACK.slice();
+  return Array.from(list.querySelectorAll('.fallback-item')).map(function(el){return el.dataset.prov});
+}
+function getEnabled(){
+  var en={};
+  document.querySelectorAll('[data-enable]').forEach(function(cb){en[cb.dataset.enable]=cb.checked});
+  return en;
 }
 
 /* ── NAV ─────────────────────────────────────────────── */
@@ -84,37 +156,28 @@ function goTo(n){
 /* ── PROVIDER ────────────────────────────────────────── */
 window.switchProvider=function(provider){
   S.provider=provider;
-  var cfg=PROVIDERS[provider];
-  document.querySelectorAll('.prov-tab').forEach(function(t){t.classList.remove('active')});
-  var active=document.querySelector('.prov-tab[data-provider="'+provider+'"]');
+  document.querySelectorAll('#drawer-providers .prov-tab').forEach(function(t){t.classList.remove('active')});
+  var active=document.querySelector('#drawer-providers .prov-tab[data-provider="'+provider+'"]');
   if(active)active.classList.add('active');
-
-  var ms=document.getElementById('f-model');
-  ms.innerHTML=cfg.models.map(function(m){return '<option value="'+m+'"'+(m===cfg.defaultModel?' selected':'')+'>'+m+'</option>'}).join('');
-
-  var kw=document.getElementById('api-key-wrap');
-  var ki=document.getElementById('f-apikey');
-  if(cfg.needsKey){
-    kw.style.display='';ki.required=true;
-    var p={groq:'gsk_...',openrouter:'sk-or-v1-...',gemini:'AIza...'};
-    ki.placeholder=p[provider]||'API key';
-    var saved=loadKeys(provider);
-    if(saved.length>0)ki.value=saved.join('\n');
-    else ki.value='';
-  }else{kw.style.display='none';ki.required=false;ki.value=''}
-
-  document.getElementById('ollama-url-wrap').style.display=provider==='ollama'?'':'none';
-
   var notes={groq:'<strong>Groq</strong> \u2014 Ultra-fast inference. Free key at <a href="https://console.groq.com" target="_blank">console.groq.com</a>',ollama:'<strong>Ollama</strong> \u2014 100% local, zero cost. <a href="https://ollama.com" target="_blank">Install</a>, then <code>ollama pull llama3</code>.',openrouter:'<strong>OpenRouter</strong> \u2014 Multiple models. Free tier at <a href="https://openrouter.ai" target="_blank">openrouter.ai</a>',gemini:'<strong>Gemini</strong> \u2014 Google free tier. Key at <a href="https://aistudio.google.com/apikey" target="_blank">AI Studio</a>'};
   var ne=document.getElementById('prov-note');
   if(ne)ne.innerHTML=notes[provider]||'';
+  updateProvStatus(provider);
 };
+function updateProvStatus(provider){
+  var el=document.getElementById('prov-status');if(!el)return;
+  var cfg=PROVIDERS[provider];
+  var s=getSettings();
+  if(!cfg.needsKey){el.className='prov-status local';el.textContent='No API key needed \u2014 runs locally via Ollama';return}
+  var keys=s.keys[provider]||[];
+  if(keys.length>0){el.className='prov-status configured';el.textContent=keys.length+' key'+(keys.length>1?'s':'')+' configured'}
+  else{el.className='prov-status missing';el.textContent='No API key configured'}
+}
 
 /* ── DOC GRID ────────────────────────────────────────── */
 function renderDocGrid(){
   var filtered=S.filter==='all'?DOCS:DOCS.filter(function(d){return d.cat===S.filter});
-  var g=document.getElementById('doc-grid');
-  if(!g)return;
+  var g=document.getElementById('doc-grid');if(!g)return;
   g.innerHTML=filtered.map(function(d){
     return '<div class="doc-card'+(S.selected.has(d.id)?' sel':'')+'" id="dc-'+d.id+'" onclick="toggleDoc(\''+d.id+'\')" title="'+d.tip+'"><div class="dc-check">\u2713</div><div class="dc-icon">'+d.icon+'</div><div class="dc-name">'+d.name+'</div><div class="dc-cat">'+d.cat+'</div></div>';
   }).join('');
@@ -153,16 +216,51 @@ function log(msg,type){
 /* ── INIT ────────────────────────────────────────────── */
 document.addEventListener('DOMContentLoaded',function(){
   renderDocGrid();
-  switchProvider('groq');
+  var s=getSettings();
+  var initProv=s.fallbackOrder&&s.fallbackOrder.length?s.fallbackOrder[0]:'openrouter';
+  switchProvider(initProv);
+  updateProvStatus(initProv);
+
+  document.getElementById('btn-settings').addEventListener('click',openDrawer);
+  document.getElementById('drawer-close').addEventListener('click',closeDrawer);
+  document.getElementById('drawer-overlay').addEventListener('click',closeDrawer);
+
+  document.getElementById('drawer-save').addEventListener('click',function(){
+    var s={
+      fallbackOrder:getFallbackOrder(),
+      enabled:getEnabled(),
+      keys:{
+        groq:parseKeys(document.getElementById('s-groq-keys').value),
+        gemini:parseKeys(document.getElementById('s-gemini-keys').value),
+        openrouter:parseKeys(document.getElementById('s-openrouter-keys').value)
+      },
+      models:{
+        groq:document.getElementById('s-groq-model').value,
+        gemini:document.getElementById('s-gemini-model').value,
+        openrouter:document.getElementById('s-openrouter-model').value,
+        ollama:PROVIDERS.ollama.defaultModel
+      },
+      ollamaUrl:document.getElementById('s-ollama-url').value.trim(),
+      watermark:{
+        text:document.getElementById('s-wm-text').value.trim(),
+        opacity:parseFloat(document.getElementById('s-wm-opacity').value)||0.15,
+        fontSize:parseInt(document.getElementById('s-wm-fontsize').value)||48
+      }
+    };
+    saveSettings(s);
+    closeDrawer();
+    updateProvStatus(S.provider);
+    showToast('Settings saved');
+  });
 
   document.getElementById('btn-to-docs').addEventListener('click',function(){
     var name=document.getElementById('f-name').value.trim();
     if(!name){showToast('Enter a Project/Service Name','err');return}
+    var s=getSettings();
     var cfg=PROVIDERS[S.provider];
     if(cfg.needsKey){
-      var keys=getKeysFromInput();
-      if(keys.length===0){showToast('API key required for '+cfg.name,'err');return}
-      saveKeys(S.provider,keys);
+      var keys=s.keys[S.provider];
+      if(!keys||keys.length===0){showToast('Add API key in Settings for '+cfg.name,'err');return}
     }
     goTo(2);
   });
@@ -196,18 +294,20 @@ window.openInNewTab=function(){var d=S.generatedFiles[S.previewIndex];if(!d||!d.
 /* ── GENERATION ──────────────────────────────────────── */
 window.startGeneration=async function(){
   if(S.selected.size===0){showToast('Select at least one document','err');return}
-  var cfg=PROVIDERS[S.provider];
-  var keys=getKeysFromInput();
+  var s=getSettings();
   var payload={
     provider:S.provider,
-    ollamaUrl:document.getElementById('f-ollama-url')?document.getElementById('f-ollama-url').value.trim():'http://localhost:11434',
-    ollamaModel:document.getElementById('f-model').value||cfg.defaultModel,
-    groqKeys:S.provider==='groq'?keys:[],
-    groqModel:document.getElementById('f-model').value||cfg.defaultModel,
-    openrouterKeys:S.provider==='openrouter'?keys:[],
-    openrouterModel:document.getElementById('f-model').value||cfg.defaultModel,
-    geminiKeys:S.provider==='gemini'?keys:[],
-    geminiModel:document.getElementById('f-model').value||cfg.defaultModel,
+    ollamaUrl:s.ollamaUrl||'http://localhost:11434',
+    ollamaModel:s.models.ollama||'llama3',
+    groqKeys:s.keys.groq||[],
+    groqModel:s.models.groq||PROVIDERS.groq.defaultModel,
+    openrouterKeys:s.keys.openrouter||[],
+    openrouterModel:s.models.openrouter||PROVIDERS.openrouter.defaultModel,
+    geminiKeys:s.keys.gemini||[],
+    geminiModel:s.models.gemini||PROVIDERS.gemini.defaultModel,
+    fallbackOrder:s.fallbackOrder||DEFAULT_FALLBACK,
+    enabled:s.enabled||{},
+    watermark:s.watermark||{},
     metadata:{
       name:document.getElementById('f-name').value.trim(),
       sector:document.getElementById('f-sector').value.trim(),
@@ -228,29 +328,45 @@ window.startGeneration=async function(){
   var fill=document.getElementById('prog-fill');
   var lbl=document.getElementById('prog-lbl');
   var pct=document.getElementById('prog-pct');
+  var lp=document.getElementById('live-preview');
+  var lpName=document.getElementById('live-doc-name');
+  var seenLogs=0;
 
   try{
     setProg(2,'Starting...',lbl,fill,pct);
-    log('Provider: '+cfg.name+' \u2014 '+payload.documents.length+' documents');
 
     var resp=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     if(!resp.ok)throw new Error('Start failed: '+resp.status);
     var jobId=(await resp.json()).jobId;
-    log('Job '+jobId+' started');
 
-    var lastMsg='';
     while(true){
-      await new Promise(function(r){setTimeout(r,2000)});
+      await new Promise(function(r){setTimeout(r,1000)});
       var sr=await fetch('/api/status/'+jobId);
       if(!sr.ok)throw new Error('Lost connection');
       var st=await sr.json();
 
-      if(st.progressMessage!==lastMsg){log(st.progressMessage,st.status==='error'?'error':'active');lastMsg=st.progressMessage}
+      if(st.logs&&st.logs.length>seenLogs){
+        for(var i=seenLogs;i<st.logs.length;i++){
+          var entry=st.logs[i];
+          log(entry.message,entry.type==='error'?'error':entry.type==='success'?'success':'active');
+        }
+        seenLogs=st.logs.length;
+      }
+
+      if(st.currentDocName&&lpName)lpName.textContent='Generating: '+st.currentDocName;
+      else if(lpName)lpName.textContent='';
+
+      if(st.currentContent&&lp){
+        lp.innerHTML=renderMarkdownInline(st.currentContent);
+        lp.scrollTop=lp.scrollHeight;
+      }else if(lp&&st.currentDocName){
+        lp.innerHTML='<div class="preview-empty" style="padding:20px;color:var(--text3)">Streaming content...</div>';
+      }
+
       if(st.total>0){var p=Math.round((st.current/st.total)*90)+5;setProg(p,st.current+'/'+st.total+' documents',lbl,fill,pct)}
 
       if(st.status==='done'){
         setProg(100,'Complete',lbl,fill,pct);
-        log(st.results.length+' documents generated','success');
         S.generatedFiles=st.results||[];
         var dl=await fetch('/api/download/'+jobId);
         var blob=await dl.blob();
@@ -270,6 +386,26 @@ window.startGeneration=async function(){
     setTimeout(function(){if(confirm('Failed. Return to setup?')){goTo(1);if(fill)fill.style.background=''}},2500);
   }
 };
+
+function renderMarkdownInline(md){
+  return md
+    .replace(/^### (.+)$/gm,'<h3>$1</h3>')
+    .replace(/^## (.+)$/gm,'<h2>$1</h2>')
+    .replace(/^# (.+)$/gm,'<h1>$1</h1>')
+    .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g,'<em>$1</em>')
+    .replace(/`([^`]+)`/g,'<code>$1</code>')
+    .replace(/^\|(.+)\|$/gm,function(m){
+      var cells=m.split('|').filter(function(c){return c.trim()!==''});
+      if(cells.every(function(c){return /^[\s\-:]+$/.test(c)}))return '';
+      return '<tr>'+cells.map(function(c){return '<td>'+c.trim()+'</td>'}).join('')+'</tr>';
+    })
+    .replace(/(<tr>.*<\/tr>\n?)+/g,function(m){return '<table>'+m+'</table>'})
+    .replace(/^- (.+)$/gm,'<li>$1</li>')
+    .replace(/(<li>.*<\/li>\n?)+/g,function(m){return '<ul>'+m+'</ul>'})
+    .replace(/\n{2,}/g,'<br><br>')
+    .replace(/\n/g,'<br>');
+}
 
 function setProg(p,text,lbl,fill,pct){if(fill)fill.style.width=p+'%';if(lbl)lbl.textContent=text;if(pct)pct.textContent=Math.round(p)+'%'}
 
