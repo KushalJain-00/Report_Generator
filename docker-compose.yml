@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  # ── RIG Backend (FastAPI) ───────────────────────────────────
+  rig:
+    build: .
+    container_name: rig-app
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONUNBUFFERED=1
+
+  # ── Ollama (optional, for local AI) ─────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: rig-ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes:
+  ollama_data:
