@@ -172,10 +172,9 @@ function renderDocGrid() {
   g.innerHTML = filtered.map((d) => `<div class="doc-card${S.selected.has(d.id) ? ' sel' : ''}" data-id="${d.id}" title="${d.tip}"><div class="dc-check">\u2713</div><div class="dc-icon">${d.icon}</div><div class="dc-name">${d.name}</div><div class="dc-cat">${d.cat}</div></div>`).join('');
   updateSelCount();
 }
-function toggleDoc(id) {
+function toggleDoc(id, el) {
   S.selected.has(id) ? S.selected.delete(id) : S.selected.add(id);
-  const e = $(`dc-${id}`);
-  if (e) e.classList.toggle('sel', S.selected.has(id));
+  if (el) el.classList.toggle('sel', S.selected.has(id));
   updateSelCount();
 }
 function filterDocs(el, cat) {
@@ -488,7 +487,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   $('doc-grid').addEventListener('click', (e) => {
     const card = e.target.closest('.doc-card');
-    if (card) toggleDoc(card.dataset.id);
+    if (card) toggleDoc(card.dataset.id, card);
   });
   $('results-list').addEventListener('click', (e) => {
     const item = e.target.closest('.doc-list-item');
