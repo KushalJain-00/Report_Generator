@@ -1,8 +1,0 @@
-[Desktop Entry]
-Name=RIG
-Comment=Report Intelligence Generator
-Exec=python3 /home/kushal_jain/PROJECTS/Report_Generator_Dashboard/start.py
-Icon=utilities-terminal
-Terminal=true
-Type=Application
-Categories=Utility;
