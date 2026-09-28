@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Rebuild RIG from a clean slate — same product (45 consulting docs, 4 LLM providers, PDF/DOCX/ZIP, 4-step wizard), modular code, and a responsive UI that never stalls during rendering.
+**Goal:** Rebuild RIG from a clean slate — same product (44 consulting docs, 4 LLM providers, PDF/DOCX/ZIP, 4-step wizard), modular code, and a responsive UI that never stalls during rendering.
 
 **Architecture:** FastAPI backend split into small modules (`rig/` package). Generation is **sequential** (one doc at a time — deliberate: concurrent generation hammers free-tier tokens and fails silently). The real fixes are: CPU-bound PDF/DOCX rendering moved off the event loop via `asyncio.to_thread` (so log lines + live streaming preview keep flowing during rendering), and one shared `httpx.AsyncClient` (no reconnect churn between retries). Frontend rebuilt in vanilla JS/HTML/CSS with identical UX; doc catalog becomes single-source from the backend.
 
@@ -14,10 +14,10 @@
 
 - Python 3.12; no new runtime dependencies (pytest added as dev-only)
 - Existing API contract **unchanged**: `POST /api/generate`, `GET /api/status/{id}`, `GET /api/download/{id}` — same request/response shapes as legacy (status keeps `currentContent` / `currentDocName` for live preview; **no new status fields**)
-- One **addition**: `GET /api/docs` returns the 45-doc catalog (single source of truth)
+- One **addition**: `GET /api/docs` returns the 44-doc catalog (single source of truth)
 - ZIP layout unchanged: `BLUEPRINT.json` + `{CATEGORY}/{Name}.pdf` + `{CATEGORY}/{Name}.docx`
 - UX unchanged: 4-step wizard, settings drawer (keys/models/fallback-drag/watermark), live streaming preview, results preview, dark zinc+indigo theme, light/dark toggle
-- All 45 doc templates, provider defaults, models, fallback semantics preserved
+- All 44 doc templates, provider defaults, models, fallback semantics preserved
 - Backend validates doc IDs from the request against the catalog (422 on unknown — legacy accepted anything)
 - **Sequential generation only** — no asyncio.gather/semaphore over documents
 - Wipe is preceded by a **backup commit + `legacy-rig` tag** of all current work (including untracked `start.py`, `RIG.bat`, `rig.desktop`); `.git` and `.venv` survive the wipe; **this plan file survives the wipe** (kept under `docs/`)
@@ -28,7 +28,7 @@
 app.py                 # entrypoint only (~15 lines: uvicorn.run)
 rig/
   __init__.py
-  catalog.py           # 45 doc templates + validate_docs(ids)
+  catalog.py           # 44 doc templates + validate_docs(ids)
   providers.py         # shared httpx client, per-provider calls, fallback chain, streaming
   render.py            # build_html, render_pdf, render_docx (all pure/sync)
   jobs.py              # job store, blueprint, sequential run_job, ZIP
@@ -119,7 +119,7 @@ if __name__ == "__main__":
 
 **Interfaces:**
 - Consumes: nothing
-- Produces: `DOCS: list[dict]` (`{id, name, cat, icon, tip}` × 45); `validate_docs(ids: list[str]) -> list[dict]` raises `fastapi.HTTPException(422)` on unknown id
+- Produces: `DOCS: list[dict]` (`{id, name, cat, icon, tip}` × 44); `validate_docs(ids: list[str]) -> list[dict]` raises `fastapi.HTTPException(422)` on unknown id
 
 - [ ] **Step 1:** Write failing tests `tests/test_catalog.py`:
 
@@ -128,8 +128,8 @@ import pytest
 from fastapi import HTTPException
 from rig.catalog import DOCS, validate_docs
 
-def test_45_docs():
-    assert len(DOCS) == 45
+def test_44_docs():
+    assert len(DOCS) == 44
 
 def test_category_counts():
     from collections import Counter
@@ -148,7 +148,7 @@ def test_valid_id_returns_doc():
 ```
 
 - [ ] **Step 2:** Run `pytest -q` → FAIL
-- [ ] **Step 3:** Implement `rig/catalog.py` by porting the exact legacy DOCS array from `git show legacy-rig:assets/js/app.js` lines 1-46 (45 entries, emoji icons preserved), plus:
+- [ ] **Step 3:** Implement `rig/catalog.py` by porting the exact legacy DOCS array from `git show legacy-rig:assets/js/app.js` lines 1-46 (44 entries — the legacy '45' copy was an off-by-one; emoji icons preserved), plus:
 
 ```python
 def validate_docs(ids: list[str]) -> list[dict]:
@@ -472,7 +472,7 @@ def make_body():
 def test_docs_endpoint():
     r = client.get("/api/docs")
     assert r.status_code == 200
-    assert len(r.json()) == 45
+    assert len(r.json()) == 44
 
 
 def test_generate_unknown_doc_422():
@@ -524,6 +524,7 @@ def test_status_404():
 **Interfaces:**
 - Consumes: `GET /api/docs`, `POST /api/generate`, `GET /api/status/{id}`, `GET /api/download/{id}` (shapes locked in Task 6)
 
+- [ ] **Step 0 (ruling applied):** catalog is 44 docs — frontend copy must say 44, not 45: hero headline `Generate 44 consulting documents`, filter chip `All 44`, and any other count references in `index.html`.
 - [ ] **Step 1:** Port stylesheet: `git show legacy-rig:assets/css/index.css > assets/css/index.css` (243 lines — the complete zinc+indigo theme: topbar, stepper, hero, forms, doc grid, gen layout, live preview, results, drawer, fallback list, toast, light theme). Do not restore `auth.css`.
 - [ ] **Step 2:** Rebuild `index.html` — structural parity with legacy (`git show legacy-rig:index.html`): same IDs (`f-name ... f-lang`, `doc-grid`, `prog-fill/lbl/pct`, `status-ticker`, `live-preview`, `live-doc-name`, `results-list`, `pv-content`, drawer IDs, `toast`), same inline theme-toggle script at the bottom. Keep `<link rel="stylesheet" href="assets/css/index.css">` and `<script src="assets/js/app.js">`.
 - [ ] **Step 3:** Rebuild `assets/js/app.js` from legacy logic (`git show legacy-rig:assets/js/app.js`) with these changes:
@@ -534,7 +535,7 @@ def test_status_404():
   - Style cleanup: template literals instead of string concatenation; keep it vanilla, no build step
 - [ ] **Step 4:** Syntax gate: `node --check assets/js/app.js` → OK; `python -c "from rig.routes import app"` → OK
 - [ ] **Step 5:** Smoke: `python app.py &`, then:
-  - `curl -s localhost:8000/api/docs | python3 -c "import json,sys; print(len(json.load(sys.stdin)))"` → `45`
+  - `curl -s localhost:8000/api/docs | python3 -c "import json,sys; print(len(json.load(sys.stdin)))"` → `44`
   - `curl -s localhost:8000/ | head -5` → HTML
   - `curl -s -X POST localhost:8000/api/generate -H 'Content-Type: application/json' -d '{"documents":[{"id":"bogus"}]}' -o /dev/null -w "%{http_code}"` → `422`
   - Kill server
@@ -555,7 +556,7 @@ def test_status_404():
 - [ ] **Step 1:** `pytest -q` → all green; count tests ≥ 20
 - [ ] **Step 2:** `git log --oneline` → clean task-by-task history, no uncommitted changes (`git status --porcelain` empty)
 - [ ] **Step 3:** Live E2E (needs user's API key or running Ollama): `python app.py`, open http://localhost:8000, fill step 1, select 2 docs in step 2, generate with a configured provider in step 3, confirm: log lines AND live preview keep updating **while** PDFs convert (event-loop fix proven), step 4 preview renders, ZIP downloads, PDF/DOCX open cleanly
-- [ ] **Step 4:** Perf sanity: legacy single-doc cycle froze the UI during PDF/DOCX conversion; new build must not. 45-doc wall clock bounded by LLM latency (sequential, as requested) with rendering pipelined off-loop
+- [ ] **Step 4:** Perf sanity: legacy single-doc cycle froze the UI during PDF/DOCX conversion; new build must not. 44-doc wall clock bounded by LLM latency (sequential, as requested) with rendering pipelined off-loop
 - [ ] **Step 5:** Report results to user; `obsidian-memory` progress update + session notes
 
 ## Self-Review Notes (done)
