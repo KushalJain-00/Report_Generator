@@ -9,33 +9,89 @@ a ZIP containing PDF and DOCX files ready to send to a client.
 
 ## Requirements
 
-- **Python 3.10 or newer.** The Dockerfile uses 3.12. Any 3.10+ should work.
+- **Python 3.10 or newer.** The Dockerfile uses 3.12. Any 3.10+ will work.
 - **A free API key** from at least one provider (Groq, Gemini, or OpenRouter),
   *or* a local Ollama install for fully offline use.
-- **WeasyPrint system libraries** (for PDF rendering). On most systems
-  `pip install weasyprint` handles this automatically. If PDF generation
-  fails, see the [Troubleshooting](#troubleshooting) section.
+- **WeasyPrint system libraries** (for PDF rendering).
+  - **Windows:** You need the GTK3 runtime. See Step 3 below.
+  - **macOS:** `brew install pango gdk-pixbuf` (if PDFs fail).
+  - **Linux (Ubuntu/Debian):** `sudo apt install libpango-1.0-0 libpangocairo-1.0-0 libgdk-pixbuf2.0-0`.
+  - If PDF generation still fails, see the [Troubleshooting](#troubleshooting) section.
 
 ---
 
 ## Installation
 
-### Windows
+### Windows (recommended for most users)
 
-1. Install Python from <https://www.python.org/downloads/>.
-   **Check "Add Python to PATH"** during the installer.
-2. Download or clone this repository.
-3. Double-click **`RIG.bat`**.
+Follow these steps exactly. No programming knowledge needed.
 
-The batch file checks Python, creates a virtual environment (`.venv`),
-installs all dependencies, opens your browser, and starts the server.
-No command line needed.
+**Step 1 -- Install Python**
 
-<details>
-<summary>Manual steps (PowerShell / Command Prompt)</summary>
+1. Go to <https://www.python.org/downloads/>.
+2. Click the big yellow **"Download Python 3.x.x"** button.
+3. Run the downloaded `.exe` installer.
+4. **Important:** On the first screen, check the box that says
+   **"Add python.exe to PATH"** (bottom of the window). Then click
+   "Install Now".
+5. Wait for it to finish. Click "Close".
+
+To verify: open **Command Prompt** (press `Win + R`, type `cmd`, press Enter)
+and type:
 
 ```
-cd Report_Generator_Dashboard
+python --version
+```
+
+You should see `Python 3.10` or higher. If you get `'python' is not recognized`,
+uninstall Python and reinstall it **with the PATH checkbox checked**.
+
+**Step 2 -- Install GTK3 (needed for PDF generation)**
+
+WeasyPrint uses GTK3 libraries to render PDFs. Without this, PDFs will fail.
+
+1. Go to <https://github.com/nickvdp/gtk3-windows/releases> and download
+   the latest `.exe` installer. Alternatively, install via MSYS2:
+   - Install MSYS2 from <https://www.msys2.org/>.
+   - Open the MSYS2 terminal and run: `pacman -S mingw-w64-x86_64-pango`.
+2. If you use the standalone GTK3 installer, restart your computer after
+   installing so the system can find the libraries.
+
+> **Tip:** If you skip this step, everything else still works, but the
+> downloaded ZIP will contain DOCX files only (no PDFs). You can always
+> install GTK3 later and re-generate.
+
+**Step 3 -- Download RIG**
+
+You do not need Git. Download the project as a ZIP:
+
+1. Go to the GitHub repository page.
+2. Click the green **"Code"** button, then click **"Download ZIP"**.
+3. Extract (unzip) the downloaded folder. You should see a folder called
+   `Report_Generator_Dashboard` (or similar) containing `RIG.bat`,
+   `app.py`, etc.
+
+**Step 4 -- Run RIG**
+
+1. Open the extracted folder in File Explorer.
+2. Double-click **`RIG.bat`**.
+3. A black Command Prompt window will appear. It will:
+   - Check that Python is installed.
+   - Create a virtual environment (`.venv` folder).
+   - Install all required packages (first run takes 1-2 minutes).
+   - Open your default browser to <http://localhost:8000>.
+4. **Keep the black window open.** Closing it stops the server.
+5. To stop RIG, close the black window or press `Ctrl + C` in it.
+
+That's it. RIG is now running.
+
+<details>
+<summary>Alternative: manual steps via PowerShell or Command Prompt</summary>
+
+Open PowerShell or Command Prompt, then:
+
+```
+cd C:\Users\YourName\Downloads\Report_Generator_Dashboard
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
@@ -43,6 +99,8 @@ python app.py
 ```
 
 Open <http://localhost:8000> in your browser.
+
+To stop: press `Ctrl + C` in the terminal.
 
 </details>
 
