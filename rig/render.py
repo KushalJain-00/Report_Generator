@@ -12,7 +12,9 @@ import markdown
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Cm, Pt, RGBColor
-from weasyprint import HTML as WeasyHTML
+# WeasyPrint is imported lazily inside render_pdf() because it requires
+# native GTK/Pango libraries that may not be installed (especially on Windows).
+# Lazy import keeps the server functional even without those system libraries.
 
 _PDF_STYLE = """
 @page {
@@ -109,6 +111,18 @@ def build_html(content: str, project: dict, doc: dict, blueprint: dict,
 
 def render_pdf(content: str, project: dict, doc: dict, blueprint: dict,
                provider: str, watermark: dict | None = None) -> bytes:
+    try:
+        from weasyprint import HTML as WeasyHTML
+    except (ImportError, OSError) as exc:
+        raise RuntimeError(
+            "PDF generation requires WeasyPrint with GTK libraries installed.\n"
+            "On Windows, install GTK3 runtime from:\n"
+            "  https://github.com/nickvdyck/weasyprint-win/releases  (easiest)\n"
+            "  or  https://github.com/nickvdyck/gtk-for-windows\n"
+            "On Linux:  sudo apt install libpango-1.0-0 libgdk-pixbuf2.0-0 libffi-dev\n"
+            "On macOS:  brew install pango\n\n"
+            "DOCX output works without this — select DOCX format as a workaround."
+        ) from exc
     html = build_html(content, project, doc, blueprint, provider, watermark, pdf=True)
     return WeasyHTML(string=html).write_pdf()
 

@@ -6,6 +6,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from rig import jobs as jobs_mod
+from rig import storage
 from rig.catalog import DOCS, validate_docs
 
 app = FastAPI(title="RIG")
@@ -16,6 +17,19 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 @app.get("/api/health")
 async def health():
     return {"ok": True}
+
+
+@app.get("/api/settings")
+async def get_settings_endpoint():
+    """Retrieve locally stored settings and API keys."""
+    return storage.load_settings()
+
+
+@app.post("/api/settings")
+async def save_settings_endpoint(payload: dict):
+    """Save settings and API keys locally to disk."""
+    saved = storage.save_settings(payload)
+    return {"ok": True, "settings": saved}
 
 
 class GenerateRequest(BaseModel):
@@ -52,13 +66,22 @@ async def start_generation(req: GenerateRequest, bg: BackgroundTasks):
         "lang": meta.get("lang", "English"),
     }
 
+    # Fallback to local stored keys/configs if omitted in request
+    stored = storage.load_settings()
+    stored_keys = stored.get("keys", {})
+
+    groq_keys = req.groqKeys if req.groqKeys else stored_keys.get("groq", [])
+    openrouter_keys = req.openrouterKeys if req.openrouterKeys else stored_keys.get("openrouter", [])
+    gemini_keys = req.geminiKeys if req.geminiKeys else stored_keys.get("gemini", [])
+    ollama_url = req.ollamaUrl if req.ollamaUrl else stored.get("ollamaUrl", "http://localhost:11434")
+
     llm = {
-        "ollama": {"url": req.ollamaUrl, "model": req.ollamaModel},
-        "groq": {"keys": req.groqKeys, "model": req.groqModel},
-        "openrouter": {"keys": req.openrouterKeys, "model": req.openrouterModel},
-        "gemini": {"keys": req.geminiKeys, "model": req.geminiModel},
-        "fallbackOrder": req.fallbackOrder,
-        "enabled": req.enabled,
+        "ollama": {"url": ollama_url, "model": req.ollamaModel},
+        "groq": {"keys": groq_keys, "model": req.groqModel},
+        "openrouter": {"keys": openrouter_keys, "model": req.openrouterModel},
+        "gemini": {"keys": gemini_keys, "model": req.geminiModel},
+        "fallbackOrder": req.fallbackOrder or stored.get("fallbackOrder", ["groq", "gemini", "ollama", "openrouter"]),
+        "enabled": req.enabled or stored.get("enabled", {}),
     }
 
     jid = jobs_mod.create_job(project, docs, llm, req.watermark)

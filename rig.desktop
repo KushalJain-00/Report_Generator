@@ -1,8 +1,9 @@
 [Desktop Entry]
-Name=RIG
-Comment=Report Intelligence Generator
+Name=RIG — Report Intelligence Generator
+Comment=Generate 44 consulting documents with AI
 Exec=python3 /home/kushal_jain/PROJECTS/Report_Generator_Dashboard/start.py
-Icon=utilities-terminal
+Icon=/home/kushal_jain/PROJECTS/Report_Generator_Dashboard/assets/icon.png
 Terminal=true
 Type=Application
-Categories=Utility;
+Categories=Office;Utility;
+StartupNotify=true

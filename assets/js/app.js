@@ -417,6 +417,27 @@ document.addEventListener('DOMContentLoaded', async () => {
   S.selected = new Set(DOCS.map((d) => d.id));
   renderDocGrid();
 
+  // Load and sync settings from local disk backend
+  try {
+    const setRes = await fetch('/api/settings');
+    if (setRes.ok) {
+      const serverSettings = await setRes.json();
+      const local = loadSettings() || {};
+      const merged = { ...serverSettings, ...local };
+      if (serverSettings.keys) {
+        merged.keys = merged.keys || {};
+        for (const p of ['groq', 'gemini', 'openrouter']) {
+          if ((!merged.keys[p] || merged.keys[p].length === 0) && serverSettings.keys[p] && serverSettings.keys[p].length > 0) {
+            merged.keys[p] = serverSettings.keys[p];
+          }
+        }
+      }
+      saveSettings(merged);
+    }
+  } catch (err) {
+    console.warn('Could not sync local settings from server:', err);
+  }
+
   const s = getSettings();
   const initProv = s.fallbackOrder && s.fallbackOrder.length ? s.fallbackOrder[0] : 'openrouter';
   switchProvider(initProv);
@@ -426,8 +447,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   $('drawer-close').addEventListener('click', closeDrawer);
   $('drawer-overlay').addEventListener('click', closeDrawer);
 
-  $('drawer-save').addEventListener('click', () => {
-    saveSettings({
+  $('drawer-save').addEventListener('click', async () => {
+    const newSettings = {
       fallbackOrder: getFallbackOrder(),
       enabled: getEnabled(),
       keys: {
@@ -447,10 +468,22 @@ document.addEventListener('DOMContentLoaded', async () => {
         opacity: parseFloat($('s-wm-opacity').value) || 0.15,
         fontSize: parseInt($('s-wm-fontsize').value, 10) || 48
       }
-    });
+    };
+    saveSettings(newSettings);
+
+    try {
+      await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newSettings)
+      });
+    } catch (err) {
+      console.warn('Failed to persist settings to disk:', err);
+    }
+
     closeDrawer();
     updateProvStatus(S.provider);
-    showToast('Settings saved');
+    showToast('Settings & keys saved locally on disk');
   });
 
   $('btn-to-docs').addEventListener('click', () => {

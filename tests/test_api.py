@@ -63,3 +63,29 @@ def test_full_roundtrip(monkeypatch):
 
 def test_status_404():
     assert client.get("/api/status/nope").status_code == 404
+
+
+def test_generate_uses_stored_keys_when_omitted(monkeypatch, tmp_path):
+    from rig import storage
+    test_cfg = tmp_path / "config.json"
+    monkeypatch.setattr(storage, "LOCAL_CONFIG_FILE", test_cfg)
+    storage.save_settings({"keys": {"groq": ["gsk_stored_local_key"]}})
+
+    captured_llm = []
+    orig_create_job = jobs_mod.create_job
+
+    def spy_create_job(project, docs, llm, watermark):
+        captured_llm.append(llm)
+        return orig_create_job(project, docs, llm, watermark)
+
+    monkeypatch.setattr(jobs_mod, "create_job", spy_create_job)
+
+    # Body without any groqKeys
+    body = {
+        "metadata": PROJECT,
+        "documents": [{"id": "charter", "name": "Project Charter", "cat": "planning"}],
+    }
+    r = client.post("/api/generate", json=body)
+    assert r.status_code == 200
+    assert captured_llm[0]["groq"]["keys"] == ["gsk_stored_local_key"]
+

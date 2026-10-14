@@ -2,5 +2,9 @@ __pycache__/
 .venv/
 *.pyc
 .env
+config.json
+*.key
+*.pid
+python_installer.exe
 .pytest_cache/
 .vscode/

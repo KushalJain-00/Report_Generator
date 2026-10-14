@@ -5,6 +5,8 @@ Generate 44 professional consulting documents with AI. Runs on your computer.
 You fill in your project details, pick the documents you need, and RIG creates
 a ZIP containing PDF and DOCX files ready to send to a client.
 
+> 📖 **Quick Setup Guide:** For step-by-step instructions on running the one-click desktop app, see [HOW_TO_RUN.md](HOW_TO_RUN.md).
+
 ---
 
 ## Requirements
@@ -71,19 +73,20 @@ You do not need Git. Download the project as a ZIP:
    `Report_Generator_Dashboard` (or similar) containing `RIG.bat`,
    `app.py`, etc.
 
-**Step 4 -- Run RIG**
+**Step 4 -- Run RIG (One-Click Auto-Setup)**
 
 1. Open the extracted folder in File Explorer.
 2. Double-click **`RIG.bat`**.
-3. A black Command Prompt window will appear. It will:
-   - Check that Python is installed.
-   - Create a virtual environment (`.venv` folder).
-   - Install all required packages (first run takes 1-2 minutes).
-   - Open your default browser to <http://localhost:8000>.
-4. **Keep the black window open.** Closing it stops the server.
-5. To stop RIG, close the black window or press `Ctrl + C` in it.
+3. The launcher will automatically:
+   - Check for Python (and automatically download/install Python 3.12 if missing!).
+   - Create the `.venv` virtual environment and install missing dependencies.
+   - Create a desktop shortcut **`RIG.lnk`** with the official RIG app icon on your Desktop.
+   - Start the local server and launch **Google Chrome** in dedicated desktop app mode (`--app=http://localhost:8000`).
+   - Store your API keys safely on your local disk in `config.json` (never committed or exposed).
+4. **Keep the command window open** while using RIG. Closing it or pressing `Ctrl + C` stops the server.
+5. In future, you can launch RIG straight from the **`RIG`** icon on your Desktop!
 
-That's it. RIG is now running.
+That's it. RIG is now running as a standalone desktop app.
 
 <details>
 <summary>Alternative: manual steps via PowerShell or Command Prompt</summary>
