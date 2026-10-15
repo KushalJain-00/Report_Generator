@@ -52,7 +52,7 @@ const PROVIDERS = {
   gemini:{name:'Gemini',models:['gemini-2.5-flash','gemini-2.5-flash-lite','gemini-2.5-pro','gemini-flash-latest'],defaultModel:'gemini-2.5-flash',needsKey:true}
 };
 
-const S={selected:new Set(DOCS.map(d=>d.id)),filter:'all',blobUrl:null,provider:'groq',generatedFiles:[],previewIndex:null};
+const S={selected:new Set(DOCS.map(d=>d.id)),filter:'all',blobUrl:null,provider:'groq',generatedFiles:[],previewIndex:null,jobId:null,models:Object.fromEntries(Object.keys(PROVIDERS).map(function(p){return[p,PROVIDERS[p].defaultModel]}))};
 const CAT_ICONS={overview:'\u{1F4D6}',planning:'\u{1F4CB}',operations:'\u2699\uFE0F',data:'\u{1F4CA}',business:'\u{1F4BC}',marketing:'\u{1F4E3}'};
 
 /* ── KEY STORAGE ──────────────────────────────────────── */
@@ -83,14 +83,17 @@ function goTo(n){
 
 /* ── PROVIDER ────────────────────────────────────────── */
 window.switchProvider=function(provider){
+  var ms=document.getElementById('f-model');
+  if(ms&&ms.value&&S.models[S.provider])S.models[S.provider]=ms.value;
   S.provider=provider;
   var cfg=PROVIDERS[provider];
   document.querySelectorAll('.prov-tab').forEach(function(t){t.classList.remove('active')});
   var active=document.querySelector('.prov-tab[data-provider="'+provider+'"]');
   if(active)active.classList.add('active');
 
-  var ms=document.getElementById('f-model');
-  ms.innerHTML=cfg.models.map(function(m){return '<option value="'+m+'"'+(m===cfg.defaultModel?' selected':'')+'>'+m+'</option>'}).join('');
+  var cur=S.models[provider]||cfg.defaultModel;
+  if(cfg.models.indexOf(cur)===-1){cur=cfg.defaultModel;S.models[provider]=cur}
+  ms.innerHTML=cfg.models.map(function(m){return '<option value="'+m+'"'+(m===cur?' selected':'')+'>'+m+'</option>'}).join('');
 
   var kw=document.getElementById('api-key-wrap');
   var ki=document.getElementById('f-apikey');
@@ -152,6 +155,7 @@ function log(msg,type){
 
 /* ── INIT ────────────────────────────────────────────── */
 document.addEventListener('DOMContentLoaded',function(){
+  document.querySelectorAll('.doc-total').forEach(function(e){e.textContent=DOCS.length});
   renderDocGrid();
   switchProvider('groq');
 
@@ -176,19 +180,47 @@ document.addEventListener('DOMContentLoaded',function(){
 });
 
 /* ── PREVIEW ─────────────────────────────────────────── */
+function renderPreview(doc){
+  var tt=document.getElementById('pv-title');
+  var ct=document.getElementById('pv-content');
+  if(tt)tt.textContent=doc.docName+' \u2014 '+doc.wordCount+' words';
+  if(!ct)return;
+  if(doc.error)ct.innerHTML='<div class="preview-empty" style="color:var(--red)"><div class="preview-empty-icon">\u2715</div>'+(doc.errorMessage||'Generation failed')+'</div>';
+  else if(doc.html)ct.innerHTML=doc.html;
+  else{var e=document.createElement('div');e.textContent=doc.markdown||'No content';ct.innerHTML='<pre style="white-space:pre-wrap">'+e.innerHTML+'</pre>'}
+}
+
+async function fetchDocContent(i){
+  var doc=S.generatedFiles[i];
+  try{
+    var r=await fetch('/api/document/'+S.jobId+'/'+i);
+    if(!r.ok)throw new Error(r.status===404?'Document not found':'Load failed ('+r.status+')');
+    Object.assign(doc,await r.json());
+    doc.loading=false;
+    if(S.previewIndex===i)renderPreview(doc);
+  }catch(e){
+    doc.loading=false;
+    if(S.previewIndex===i){
+      var ct=document.getElementById('pv-content');
+      if(ct)ct.innerHTML='<div class="preview-empty" style="color:var(--red)"><div class="preview-empty-icon">\u2715</div>'+e.message+'</div>';
+    }
+  }
+}
+
 window.previewDoc=function(i){
   S.previewIndex=i;var doc=S.generatedFiles[i];if(!doc)return;
   document.querySelectorAll('.doc-list-item').forEach(function(el,j){el.classList.toggle('active',j===i)});
   var tb=document.getElementById('preview-toolbar');
-  var tt=document.getElementById('pv-title');
-  var ct=document.getElementById('pv-content');
   if(tb)tb.style.display='';
+  var tt=document.getElementById('pv-title');
   if(tt)tt.textContent=doc.docName+' \u2014 '+doc.wordCount+' words';
-  if(ct){
-    if(doc.error)ct.innerHTML='<div class="preview-empty" style="color:var(--red)"><div class="preview-empty-icon">\u2715</div>'+(doc.errorMessage||'Generation failed')+'</div>';
-    else if(doc.html)ct.innerHTML=doc.html;
-    else{var e=document.createElement('div');e.textContent=doc.markdown||'No content';ct.innerHTML='<pre style="white-space:pre-wrap">'+e.innerHTML+'</pre>'}
+  if(!doc.error&&doc.html===undefined){
+    var ct=document.getElementById('pv-content');
+    if(ct)ct.innerHTML='<div class="preview-empty">Loading\u2026</div>';
+    if(!doc.loading){doc.loading=true;fetchDocContent(i)}
+    return;
   }
+  renderPreview(doc);
 };
 window.copyMarkdown=function(){var d=S.generatedFiles[S.previewIndex];if(!d)return;navigator.clipboard.writeText(d.markdown||'').then(function(){showToast('Markdown copied')})};
 window.openInNewTab=function(){var d=S.generatedFiles[S.previewIndex];if(!d||!d.html)return;var w=window.open('','_blank');w.document.write(d.html);w.document.close()};
@@ -197,17 +229,16 @@ window.openInNewTab=function(){var d=S.generatedFiles[S.previewIndex];if(!d||!d.
 window.startGeneration=async function(){
   if(S.selected.size===0){showToast('Select at least one document','err');return}
   var cfg=PROVIDERS[S.provider];
-  var keys=getKeysFromInput();
   var payload={
     provider:S.provider,
-    ollamaUrl:document.getElementById('f-ollama-url')?document.getElementById('f-ollama-url').value.trim():'http://localhost:11434',
-    ollamaModel:document.getElementById('f-model').value||cfg.defaultModel,
-    groqKeys:S.provider==='groq'?keys:[],
-    groqModel:document.getElementById('f-model').value||cfg.defaultModel,
-    openrouterKeys:S.provider==='openrouter'?keys:[],
-    openrouterModel:document.getElementById('f-model').value||cfg.defaultModel,
-    geminiKeys:S.provider==='gemini'?keys:[],
-    geminiModel:document.getElementById('f-model').value||cfg.defaultModel,
+    ollamaUrl:S.provider==='ollama'?(document.getElementById('f-ollama-url')?document.getElementById('f-ollama-url').value.trim():''):'',
+    ollamaModel:S.models.ollama,
+    groqKeys:loadKeys('groq'),
+    groqModel:S.models.groq,
+    openrouterKeys:loadKeys('openrouter'),
+    openrouterModel:S.models.openrouter,
+    geminiKeys:loadKeys('gemini'),
+    geminiModel:S.models.gemini,
     metadata:{
       name:document.getElementById('f-name').value.trim(),
       sector:document.getElementById('f-sector').value.trim(),
@@ -236,13 +267,19 @@ window.startGeneration=async function(){
     var resp=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     if(!resp.ok)throw new Error('Start failed: '+resp.status);
     var jobId=(await resp.json()).jobId;
+    S.jobId=jobId;
     log('Job '+jobId+' started');
 
-    var lastMsg='';
+    var lastMsg='',fails=0,started=Date.now();
     while(true){
       await new Promise(function(r){setTimeout(r,2000)});
-      var sr=await fetch('/api/status/'+jobId);
-      if(!sr.ok)throw new Error('Lost connection');
+      if(Date.now()-started>30*60*1000)throw new Error('Timed out');
+      var sr=await fetch('/api/status/'+jobId).catch(function(){return null});
+      if(!sr||!sr.ok){
+        if(++fails<3)continue;
+        throw new Error('Lost connection');
+      }
+      fails=0;
       var st=await sr.json();
 
       if(st.progressMessage!==lastMsg){log(st.progressMessage,st.status==='error'?'error':'active');lastMsg=st.progressMessage}
@@ -250,9 +287,11 @@ window.startGeneration=async function(){
 
       if(st.status==='done'){
         setProg(100,'Complete',lbl,fill,pct);
-        log(st.results.length+' documents generated','success');
-        S.generatedFiles=st.results||[];
+        var results=st.results||[];
+        log(results.filter(function(r){return !r.error}).length+' documents generated','success');
+        S.generatedFiles=results;
         var dl=await fetch('/api/download/'+jobId);
+        if(!dl.ok)throw new Error('Download failed: '+dl.status);
         var blob=await dl.blob();
         S.blobUrl=URL.createObjectURL(blob);
         log('ZIP ready ('+(blob.size/1024).toFixed(1)+' KB)','success');
@@ -267,7 +306,7 @@ window.startGeneration=async function(){
     if(lbl)lbl.textContent='Failed';
     if(pct)pct.textContent='\u2715';
     showToast(err.message,'err');
-    setTimeout(function(){if(confirm('Failed. Return to setup?')){goTo(1);if(fill)fill.style.background=''}},2500);
+    setTimeout(function(){goTo(1);if(fill)fill.style.background=''},3000);
   }
 };
 
@@ -288,4 +327,4 @@ function renderResults(){
   var c=document.getElementById('pv-content');if(c)c.innerHTML='<div class="preview-empty"><div class="preview-empty-icon">&#128196;</div>Select a document to preview</div>';
 }
 
-window.restart=function(){if(S.blobUrl){URL.revokeObjectURL(S.blobUrl);S.blobUrl=null}S.generatedFiles=[];S.previewIndex=null;goTo(1)};
+window.restart=function(){if(S.blobUrl){URL.revokeObjectURL(S.blobUrl);S.blobUrl=null}S.generatedFiles=[];S.previewIndex=null;S.jobId=null;goTo(1)};
