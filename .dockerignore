@@ -1,0 +1,10 @@
+.venv
+.git
+.worktrees
+__pycache__
+*.pyc
+tests
+rig
+outputs
+.env
+*.md
