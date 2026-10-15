@@ -1,5 +1,6 @@
 #!/bin/bash
 # RIG — One-click start
+set -e
 cd "$(dirname "$0")"
 
 if [ ! -d ".venv" ]; then
@@ -8,7 +9,7 @@ if [ ! -d ".venv" ]; then
 fi
 
 source .venv/bin/activate
-pip install -q fastapi uvicorn httpx 2>/dev/null
+pip install -q -r requirements.txt
 
 echo ""
 echo "  RIG — Report Intelligence Generator"

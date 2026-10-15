@@ -1,6 +1,6 @@
 # RIG — Report Intelligence Generator
 
-> One-command local app for generating 45 professional consulting documents with AI
+> One-command local app for generating 44 professional consulting documents with AI
 
 ## Quick Start
 
@@ -30,11 +30,19 @@ ollama pull llama3
 python app.py
 ```
 
+### Docker (with Ollama)
+
+```bash
+docker compose up -d ollama
+docker compose exec ollama ollama pull llama3   # models don't ship with the empty volume
+docker compose up -d
+```
+
 ## How It Works
 
 1. **Select provider** — Groq (fast), Ollama (local), OpenRouter, or Gemini (free)
 2. **Fill project details** — name, sector, client, description
-3. **Pick documents** — choose from 45 consulting templates
+3. **Pick documents** — choose from 44 consulting templates
 4. **Generate** — app creates a blueprint, then generates each doc with retry + fallback
 5. **Preview & download** — preview individual docs, then download ZIP with markdown + HTML
 
@@ -70,7 +78,7 @@ python app.py (single file)
 └── docker-compose.yml  # Optional: Docker deployment
 ```
 
-## Document Types (45)
+## Document Types (44)
 
 | Category | Count | Examples |
 |----------|-------|---------|
@@ -89,7 +97,7 @@ curl -X POST http://localhost:8000/api/generate \
   -H "Content-Type: application/json" \
   -d '{
     "provider": "groq",
-    "groqKey": "gsk_...",
+    "groqKeys": ["gsk_..."],
     "metadata": {"name": "Water Audit", "desc": "Comprehensive audit"},
     "documents": [{"id": "overview", "name": "Brief Overview", "cat": "overview"}]
   }'

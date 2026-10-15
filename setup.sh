@@ -5,6 +5,7 @@
 # ─────────────────────────────────────────────────────────────
 
 set -e
+cd "$(dirname "$0")"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -41,7 +42,7 @@ else
 fi
 
 source .venv/bin/activate
-pip install -q -r requirements.txt 2>/dev/null
+pip install -q -r requirements.txt
 echo -e "${GREEN}  ✓ Dependencies installed${NC}"
 
 # ── Optional: Check Ollama ────────────────────────────────
@@ -66,7 +67,7 @@ echo ""
 echo -e "${LIME}═══════════════════════════════════════════════════${NC}"
 echo -e "${GREEN}  Setup complete!${NC}"
 echo ""
-echo -e "  Run:  ${CYAN}python app.py${NC}"
+echo -e "  Run:  ${CYAN}./run.sh${NC}"
 echo -e "  Open: ${CYAN}http://localhost:8000${NC}"
 echo ""
 echo -e "${LIME}═══════════════════════════════════════════════════${NC}"
