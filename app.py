@@ -4,18 +4,24 @@ Single-file backend. Run: python app.py
 """
 import asyncio
 import json
+import logging
+import os
+import re
 import time
+import urllib.parse
 import uuid
 import zipfile
+from html import escape
 from io import BytesIO
 
 import httpx
-from fastapi import FastAPI, BackgroundTasks
+from fastapi import BackgroundTasks, FastAPI
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 app = FastAPI(title="RIG")
+log = logging.getLogger("rig")
 
 # ── In-memory job store ────────────────────────────────────────
 jobs: dict = {}
@@ -51,8 +57,8 @@ async def call_openrouter(key: str, model: str, prompt: str, system: str, temp: 
 async def call_gemini(key: str, model: str, prompt: str, system: str, temp: float) -> str:
     async with httpx.AsyncClient(timeout=300) as c:
         r = await c.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}",
-            headers={"Content-Type": "application/json"},
+            f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+            headers={"Content-Type": "application/json", "x-goog-api-key": key},
             json={"contents": [{"parts": [{"text": f"{system}\n\n{prompt}"}]}],
                   "generationConfig": {"temperature": temp}}
         )
@@ -81,16 +87,37 @@ class RateLimited(Exception):
     pass
 
 
-# ── Retry + fallback ───────────────────────────────────────────
-PROVIDERS = ["groq", "gemini", "ollama"]
+def _redact(msg: str) -> str:
+    return re.sub(r'\?key=[^&\s\'"]+', '', msg)
 
-async def call_llm_with_fallback(llm_config: dict, prompt: str, system: str, temp=0.7) -> tuple[str, str]:
+
+_OLLAMA_HOSTS = {"localhost", "127.0.0.1", "ollama", "host.docker.internal"}
+
+
+def _ollama_ok(url: str) -> bool:
+    try:
+        p = urllib.parse.urlparse(url)
+        host = p.hostname
+    except ValueError:
+        return False
+    return p.scheme in ("http", "https") and host in _OLLAMA_HOSTS
+
+
+# ── Retry + fallback ───────────────────────────────────────────
+PROVIDERS = ["groq", "openrouter", "gemini", "ollama"]
+
+async def call_llm_with_fallback(llm_config: dict, prompt: str, system: str, temp=0.7, preferred: str = "") -> tuple[str, str]:
     """Returns (content, provider_used). Rotates through keys on 429."""
     errors = []
-    for prov in PROVIDERS:
+    order = list(PROVIDERS)
+    if preferred in order:
+        order.remove(preferred)
+        order.insert(0, preferred)
+
+    for prov in order:
         cfg = llm_config.get(prov, {})
         if prov == "ollama":
-            if not cfg.get("url"):
+            if not _ollama_ok(cfg.get("url") or ""):
                 continue
             keys = [None]  # ollama doesn't use keys
         else:
@@ -105,18 +132,31 @@ async def call_llm_with_fallback(llm_config: dict, prompt: str, system: str, tem
                         result = await call_ollama(cfg["url"], cfg.get("model", "llama3"), prompt, system, temp)
                     elif prov == "groq":
                         result = await call_groq(key, cfg.get("model", "qwen/qwen3.8-27b"), prompt, system, temp)
+                    elif prov == "openrouter":
+                        result = await call_openrouter(key, cfg.get("model", "meta-llama/llama-3-8b-instruct:free"), prompt, system, temp)
                     elif prov == "gemini":
                         result = await call_gemini(key, cfg.get("model", "gemini-2.5-flash"), prompt, system, temp)
+                    else:
+                        continue
                     return result, prov
                 except RateLimited:
                     if key_idx < len(keys) - 1:
                         errors.append(f"{prov} key#{key_idx+1}: rate limited, trying next key")
                         break  # break attempt loop, move to next key
+                    if attempt >= 3:
+                        errors.append(f"{prov} key#{key_idx+1}: rate limited on last key")
+                        break
                     wait = 5 * attempt
                     errors.append(f"{prov} key#{key_idx+1}: rate limited, waited {wait}s (last key)")
                     await asyncio.sleep(wait)
+                except httpx.HTTPStatusError as e:
+                    errors.append(f"{prov} key#{key_idx+1} attempt#{attempt}: {_redact(str(e))}")
+                    if e.response.status_code in (401, 403, 404):
+                        break  # bad key/config — don't retry, next key
+                    if attempt < 3:
+                        await asyncio.sleep(2)
                 except Exception as e:
-                    errors.append(f"{prov} key#{key_idx+1} attempt#{attempt}: {e}")
+                    errors.append(f"{prov} key#{key_idx+1} attempt#{attempt}: {_redact(str(e))}")
                     if attempt < 3:
                         await asyncio.sleep(2)
 
@@ -124,7 +164,21 @@ async def call_llm_with_fallback(llm_config: dict, prompt: str, system: str, tem
 
 
 # ── Blueprint generation ───────────────────────────────────────
-async def generate_blueprint(llm_config: dict, project: dict) -> dict:
+def _stub_blueprint(project: dict) -> dict:
+    return {
+        "projectTitle": project["name"],
+        "executiveObjective": project["desc"],
+        "coreMethodologies": [project["standards"]],
+        "primaryLocation": project["geo"],
+        "mainStakeholders": [],
+        "keyMilestones": [],
+        "priceSummary": project["price"],
+        "industryContext": "",
+        "complianceFramework": []
+    }
+
+
+async def generate_blueprint(llm_config: dict, project: dict, preferred: str = "") -> dict:
     prompt = f"""Project Blueprint for: "{project['name']}"
 Sector: {project['sector']} | Location: {project['geo']} | Client: {project['client']}
 Audience: {project['audience']} | Budget: {project['price']} | Duration: {project['duration']}
@@ -133,27 +187,35 @@ Standards: {project['standards']}
 
 Return ONLY raw JSON with keys: projectTitle, executiveObjective, coreMethodologies(array), primaryLocation, mainStakeholders(array), keyMilestones(array of {{name,duration}}), priceSummary, industryContext, complianceFramework(array)"""
 
-    text, _ = await call_llm_with_fallback(llm_config, prompt, "Generate strict JSON. No markdown.", 0.3)
+    text, _ = await call_llm_with_fallback(llm_config, prompt, "Generate strict JSON. No markdown.", 0.3, preferred)
     try:
-        return json.loads(text.strip().removeprefix("```json").removesuffix("```").strip())
+        text = text.strip()
+        try:
+            data = json.loads(text.removeprefix("```json").removesuffix("```").strip())
+        except Exception:
+            start = text.find("{")
+            if start < 0:
+                raise
+            data, _ = json.JSONDecoder().raw_decode(text[start:])
+        if not isinstance(data, dict):
+            raise ValueError("blueprint is not a JSON object")
+        return data
     except Exception:
-        return {
-            "projectTitle": project["name"],
-            "executiveObjective": project["desc"],
-            "coreMethodologies": [project["standards"]],
-            "primaryLocation": project["geo"],
-            "mainStakeholders": [],
-            "keyMilestones": [],
-            "priceSummary": project["price"],
-            "industryContext": "",
-            "complianceFramework": []
-        }
+        return _stub_blueprint(project)
 
 
 # ── Single document generation ─────────────────────────────────
-async def generate_document(llm_config: dict, project: dict, blueprint: dict, doc: dict) -> dict:
+async def generate_document(llm_config: dict, project: dict, blueprint: dict, doc: dict, preferred: str = "") -> dict:
     bp = blueprint
-    prompt = f"""Consulting document: "{doc['name']}" ({doc['cat']}).
+    name = doc.get("name", "Document")
+    cat = doc.get("cat", "general")
+    # ponytail: sanitize before try so zip paths can't escape (ZIP slip)
+    safe = re.sub(r'[^A-Za-z0-9 _-]', '', name.replace(" ", "_")).strip()[:80] or "document"
+    cat = re.sub(r'[^A-Za-z0-9_-]', '', cat) or "GENERAL"
+    fname = f"{cat}/{safe}.md"
+    hname = f"{cat}/{safe}.html"
+
+    prompt = f"""Consulting document: "{name}" ({cat}).
 
 PROJECT: {bp.get('projectTitle', project['name'])}
 OBJECTIVE: {bp.get('executiveObjective', project['desc'])}
@@ -171,12 +233,8 @@ Professional consulting tone. No placeholders. Full content."""
         content, used_provider = await call_llm_with_fallback(
             llm_config, prompt,
             "Expert consultant. Generate comprehensive markdown documents. No preamble, just the document.",
-            0.7
+            0.7, preferred
         )
-        safe = doc["name"].replace(" ", "_").replace("/", "_")
-        cat = doc.get("cat", "general").upper()
-        fname = f"{cat}/{safe}.md"
-        hname = f"{cat}/{safe}.html"
 
         html = f"""<!DOCTYPE html><html><head><meta charset="UTF-8"><style>
 body{{font-family:'Segoe UI',Arial,sans-serif;max-width:800px;margin:40px auto;padding:0 30px;color:#1a1a2e;line-height:1.7}}
@@ -192,28 +250,43 @@ blockquote{{border-left:3px solid #b8f241;margin:16px 0;padding:10px 16px;backgr
 .header{{text-align:center;margin-bottom:30px;padding-bottom:20px;border-bottom:2px solid #e0e0f0}}
 .meta{{font-size:12px;color:#7a7a9e;margin-top:8px}}
 </style></head><body>
-<div class="header"><h1>{bp.get('projectTitle', project['name'])}</h1>
-<p class="meta">{doc['name']} | {project['sector']} | {project['geo']} | via {used_provider}</p></div>
-{content}</body></html>"""
+<div class="header"><h1>{escape(str(bp.get('projectTitle', project['name'])))}</h1>
+<p class="meta">{escape(str(name))} | {escape(str(project['sector']))} | {escape(str(project['geo']))} | via {escape(used_provider)}</p></div>
+<pre style="white-space:pre-wrap">{escape(content)}</pre></body></html>"""
 
         return {
             "fileName": fname, "htmlFileName": hname,
-            "docName": doc["name"], "category": doc["cat"],
+            "docName": name, "category": cat,
             "markdown": content, "html": html,
             "wordCount": len(content.split()),
             "error": False, "usedProvider": used_provider
         }
     except Exception as e:
-        safe = doc["name"].replace(" ", "_").replace("/", "_")
-        cat = doc.get("cat", "general").upper()
-        fname = f"{cat}/{safe}.md"
+        msg = _redact(str(e))
         return {
-            "fileName": fname, "htmlFileName": f"{cat}/{safe}.html",
-            "docName": doc["name"], "category": doc["cat"],
-            "markdown": f"# {doc['name']}\n\nFailed: {e}",
-            "html": f"<h1>{doc['name']}</h1><p>Failed: {e}</p>",
-            "wordCount": 0, "error": True, "errorMessage": str(e)
+            "fileName": fname, "htmlFileName": hname,
+            "docName": name, "category": cat,
+            "markdown": f"# {name}\n\nFailed: {msg}",
+            "html": f"<h1>{escape(str(name))}</h1><p>{escape(msg)}</p>",
+            "wordCount": 0, "error": True, "errorMessage": msg
         }
+
+
+def _uniq(name: str, seen: set) -> str:
+    if name not in seen:
+        seen.add(name)
+        return name
+    stem, dot, ext = name.rpartition(".")
+    if not dot:
+        stem, ext = name, ""
+    else:
+        ext = "." + ext
+    n = 2
+    while f"{stem}-{n}{ext}" in seen:
+        n += 1
+    name = f"{stem}-{n}{ext}"
+    seen.add(name)
+    return name
 
 
 # ── Job runner ─────────────────────────────────────────────────
@@ -222,31 +295,37 @@ async def run_job(job_id: str, data: dict):
     llm_config = data.get("llm", {})
     project = data["project"]
     docs = data["docs"]
+    preferred = data.get("preferred", "")
     job["total"] = len(docs)
+    log.info("job %s started: %d docs", job_id, len(docs))
 
     try:
         # Step 1: Blueprint
         job["status"] = "generating_blueprint"
         job["progressMessage"] = "Generating project blueprint..."
-        blueprint = await generate_blueprint(llm_config, project)
-        job["blueprint"] = blueprint
+        try:
+            blueprint = await generate_blueprint(llm_config, project, preferred)
+        except Exception:
+            blueprint = _stub_blueprint(project)
 
-        # Step 2: Each document
+        # Step 2: Documents — concurrent, results appended in docs order
         zip_buffer = BytesIO()
         with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-            # Add blueprint
             zf.writestr("BLUEPRINT.json", json.dumps(blueprint, indent=2))
 
-            for i, doc in enumerate(docs):
-                job["current"] = i + 1
-                job["progressMessage"] = f"[{i+1}/{len(docs)}] Generating: {doc['name']}"
-                job["status"] = "generating"
+            job["status"] = "generating"
+            job["progressMessage"] = f"Generating {len(docs)} documents..."
+            sem = asyncio.Semaphore(4)
+            events = [asyncio.Event() for _ in docs]
+            seen: set = set()
 
-                result = await generate_document(llm_config, project, blueprint, doc)
-
-                zf.writestr(result["fileName"], result["markdown"])
-                zf.writestr(result["htmlFileName"], result["html"])
-
+            async def worker(i: int, doc: dict):
+                async with sem:
+                    result = await generate_document(llm_config, project, blueprint, doc, preferred)
+                if i:
+                    await events[i - 1].wait()
+                zf.writestr(_uniq(result["fileName"], seen), result["markdown"])
+                zf.writestr(_uniq(result["htmlFileName"], seen), result["html"])
                 job["results"].append({
                     "docName": result["docName"],
                     "fileName": result["fileName"],
@@ -258,34 +337,47 @@ async def run_job(job_id: str, data: dict):
                     "html": result["html"],
                     "category": result["category"]
                 })
+                job["current"] = i + 1
+                job["progressMessage"] = f"[{i+1}/{len(docs)}] Generated: {result['docName']}"
+                events[i].set()
+
+            await asyncio.gather(*(worker(i, d) for i, d in enumerate(docs)))
 
         job["zipBytes"] = zip_buffer.getvalue()
         job["status"] = "done"
-        job["progressMessage"] = f"Complete! {len(docs)} documents generated."
+        ok = sum(1 for r in job["results"] if not r["error"])
+        job["progressMessage"] = f"Complete! {ok}/{len(docs)} documents generated"
+        log.info("job %s done: %d/%d ok", job_id, ok, len(docs))
 
     except Exception as e:
+        log.exception("job %s failed", job_id)
         job["status"] = "error"
-        job["progressMessage"] = f"Fatal error: {e}"
-        job["error"] = str(e)
+        msg = _redact(str(e))
+        job["progressMessage"] = f"Fatal error: {msg}"
+        job["error"] = msg
 
 
 # ── API routes ─────────────────────────────────────────────────
 class GenerateRequest(BaseModel):
     provider: str = "groq"
-    ollamaUrl: str = "http://localhost:11434"
+    ollamaUrl: str = ""
     ollamaModel: str = "llama3"
-    groqKeys: list = []
+    groqKeys: list[str] = []
     groqModel: str = "qwen/qwen3.8-27b"
-    openrouterKeys: list = []
+    openrouterKeys: list[str] = []
     openrouterModel: str = "meta-llama/llama-3-8b-instruct:free"
-    geminiKeys: list = []
+    geminiKeys: list[str] = []
     geminiModel: str = "gemini-2.5-flash"
     metadata: dict = {}
-    documents: list = []
+    documents: list[dict] = []
 
 
 @app.post("/api/generate")
 async def start_generation(req: GenerateRequest, bg: BackgroundTasks):
+    for old in [k for k, v in jobs.items() if time.time() - v.get("createdAt", 0) > 3600]:
+        del jobs[old]
+    req.documents = req.documents[:45]
+
     meta = req.metadata
     project = {
         "name": meta.get("name", "Unnamed"),
@@ -301,26 +393,25 @@ async def start_generation(req: GenerateRequest, bg: BackgroundTasks):
     }
 
     llm = {
-        "ollama": {"url": req.ollamaUrl, "model": req.ollamaModel},
+        "ollama": {"url": req.ollamaUrl if _ollama_ok(req.ollamaUrl) else "", "model": req.ollamaModel},
         "groq": {"keys": req.groqKeys, "model": req.groqModel},
         "openrouter": {"keys": req.openrouterKeys, "model": req.openrouterModel},
         "gemini": {"keys": req.geminiKeys, "model": req.geminiModel},
     }
 
-    job_id = str(uuid.uuid4())[:8]
+    job_id = str(uuid.uuid4())
     jobs[job_id] = {
         "status": "queued",
         "progressMessage": "Starting...",
         "total": len(req.documents),
         "current": 0,
         "results": [],
-        "blueprint": None,
         "zipBytes": None,
         "error": None,
         "createdAt": time.time(),
     }
 
-    bg.add_task(run_job, job_id, {"project": project, "docs": req.documents, "llm": llm})
+    bg.add_task(run_job, job_id, {"project": project, "docs": req.documents, "llm": llm, "preferred": req.provider})
     return {"jobId": job_id}
 
 
@@ -334,8 +425,25 @@ async def get_status(job_id: str):
         "progressMessage": job["progressMessage"],
         "total": job["total"],
         "current": job["current"],
-        "results": job["results"],
+        "results": [{k: v for k, v in r.items() if k not in ("markdown", "html")} for r in job["results"]],
         "error": job["error"],
+    }
+
+
+@app.get("/api/document/{job_id}/{index}")
+async def get_document(job_id: str, index: int):
+    job = jobs.get(job_id)
+    if not job or index < 0 or index >= len(job["results"]):
+        return JSONResponse({"error": "Not found"}, 404)
+    r = job["results"][index]
+    return {
+        "docName": r["docName"],
+        "markdown": r["markdown"],
+        "html": r["html"],
+        "wordCount": r["wordCount"],
+        "error": r["error"],
+        "errorMessage": r.get("errorMessage", ""),
+        "category": r["category"],
     }
 
 
@@ -353,6 +461,11 @@ async def download(job_id: str):
     )
 
 
+@app.get("/health")
+async def health():
+    return {"ok": True}
+
+
 # ── Serve frontend ─────────────────────────────────────────────
 app.mount("/assets", StaticFiles(directory="assets"), name="assets")
 
@@ -365,4 +478,4 @@ if __name__ == "__main__":
     import uvicorn
     print("\n  RIG — Report Intelligence Generator")
     print("  http://localhost:8000\n")
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host=os.environ.get("HOST", "127.0.0.1"), port=8000)
