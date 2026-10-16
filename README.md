@@ -11,6 +11,10 @@ python app.py
 
 Open http://localhost:8000 — that's it.
 
+### Windows
+
+Double-click `RIG.bat`. It creates the venv, installs dependencies, starts the app, and opens your browser. Requires [Python 3](https://www.python.org/downloads/) on PATH ("Add Python to PATH" during install). Close the console window to stop the app.
+
 ### Without Ollama (cloud only)
 
 1. Get a free API key from [Groq](https://console.groq.com), [OpenRouter](https://openrouter.ai), or [Google AI Studio](https://aistudio.google.com/apikey)
