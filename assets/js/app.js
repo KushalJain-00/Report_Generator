@@ -92,8 +92,26 @@ window.switchProvider=function(provider){
   if(active)active.classList.add('active');
 
   var cur=S.models[provider]||cfg.defaultModel;
-  if(cfg.models.indexOf(cur)===-1){cur=cfg.defaultModel;S.models[provider]=cur}
-  ms.innerHTML=cfg.models.map(function(m){return '<option value="'+m+'"'+(m===cur?' selected':'')+'>'+m+'</option>'}).join('');
+  var models=cfg.models;
+  if(provider==='openrouter'&&S._orModels){models=S._orModels;cfg.models=models}
+  if(models.indexOf(cur)===-1){cur=cfg.defaultModel;S.models[provider]=cur}
+  ms.innerHTML=models.map(function(m){return '<option value="'+m+'"'+(m===cur?' selected':'')+'>'+m+'</option>'}).join('');
+
+  // ponytail: live OpenRouter catalog (public API, CORS-open); static list stays as offline fallback
+  if(provider==='openrouter'&&!S._orModels){
+    var keep=cur;
+    fetch('https://openrouter.ai/api/v1/models').then(function(r){return r.json()}).then(function(j){
+      var ids=(j.data||[]).map(function(m){return m.id}).filter(Boolean);
+      if(!ids.length)return;
+      ids.sort(function(a,b){var af=a.indexOf(':free')>-1,bf=b.indexOf(':free')>-1;return af===bf?a.localeCompare(b):(af?-1:1)});
+      S._orModels=ids;
+      if(S.provider!=='openrouter')return;
+      cfg.models=ids;
+      if(ids.indexOf(keep)===-1)keep=cfg.defaultModel;
+      S.models.openrouter=keep;
+      ms.innerHTML=ids.map(function(m){return '<option value="'+m+'"'+(m===keep?' selected':'')+'>'+m+'</option>'}).join('');
+    }).catch(function(){});
+  }
 
   var kw=document.getElementById('api-key-wrap');
   var ki=document.getElementById('f-apikey');
