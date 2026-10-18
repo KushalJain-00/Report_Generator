@@ -48,7 +48,7 @@ const DOCS = [
 const PROVIDERS = {
   groq:{name:'Groq',models:['qwen/qwen3.8-27b','qwen/qwen3.6-27b','allam-2-7b','openai/gpt-oss-120b'],defaultModel:'qwen/qwen3.8-27b',needsKey:true},
   ollama:{name:'Ollama',models:['llama3','llama3:8b','llama3:70b','qwen2.5:7b','qwen2.5:14b','mistral','phi3','gemma2'],defaultModel:'llama3',needsKey:false,defaultUrl:'http://localhost:11434'},
-  openrouter:{name:'OpenRouter',models:['meta-llama/llama-3-8b-instruct:free','meta-llama/llama-3-70b-instruct:free','mistralai/mistral-7b-instruct:free','google/gemma-2-9b-it:free','qwen/qwen-2-7b-instruct:free','openai/gpt-4o-mini','anthropic/claude-3.5-sonnet'],defaultModel:'meta-llama/llama-3-8b-instruct:free',needsKey:true},
+  openrouter:{name:'OpenRouter',models:['nvidia/nemotron-3-ultra-550b-a55b:free','thinkingmachines/inkling:free','cohere/north-mini-code:free','nvidia/nemotron-3.5-super-vl:free','liquid/lfm-2.5-2.6b:free','xingchen-agi/xing4.0-29b-a4b:free','dots-studio/dots-3-note-preview:free','openai/gpt-4o-mini'],defaultModel:'nvidia/nemotron-3-ultra-550b-a55b:free',needsKey:true},
   gemini:{name:'Gemini',models:['gemini-2.5-flash','gemini-2.5-flash-lite','gemini-2.5-pro','gemini-flash-latest'],defaultModel:'gemini-2.5-flash',needsKey:true}
 };
 
@@ -108,6 +108,7 @@ window.switchProvider=function(provider){
       if(S.provider!=='openrouter')return;
       cfg.models=ids;
       if(ids.indexOf(keep)===-1)keep=cfg.defaultModel;
+      if(ids.indexOf(keep)===-1)keep=ids[0]; // ponytail: catalog wins if default/model died upstream
       S.models.openrouter=keep;
       ms.innerHTML=ids.map(function(m){return '<option value="'+m+'"'+(m===keep?' selected':'')+'>'+m+'</option>'}).join('');
     }).catch(function(){});
