@@ -31,6 +31,7 @@ from pydantic import BaseModel
 
 # Frozen (PyInstaller) builds extract to sys._MEIPASS; source runs sit next to this file.
 _BASE = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+VERSION = "1.0.1"  # docx-only + windowed-exe logging fix
 
 app = FastAPI(title="RIG")
 log = logging.getLogger("rig")
@@ -566,7 +567,7 @@ async def download(job_id: str):
 
 @app.get("/health")
 async def health():
-    return {"ok": True}
+    return {"ok": True, "v": VERSION}
 
 
 # ── Serve frontend ─────────────────────────────────────────────
