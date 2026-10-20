@@ -19,7 +19,7 @@ Double-click `RIG.bat`. It creates the venv, installs dependencies, starts the a
 
 1. Get a free API key from [Groq](https://console.groq.com), [OpenRouter](https://openrouter.ai), or [Google AI Studio](https://aistudio.google.com/apikey)
 2. Run `python app.py`
-3. Select provider in the dashboard, paste your key, generate
+3. Select provider in the dashboard, paste your key (one per line — each becomes a card with pause/remove; requests spread across all enabled keys), set provider priority, generate
 
 ### With Ollama (fully offline)
 

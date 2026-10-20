@@ -105,62 +105,79 @@ def _ollama_ok(url: str) -> bool:
 
 # ── Retry + fallback ───────────────────────────────────────────
 PROVIDERS = ["groq", "openrouter", "gemini", "ollama"]
+_DISPATCH = {"groq": call_groq, "openrouter": call_openrouter, "gemini": call_gemini}
+_cooldowns: dict = {}  # ponytail: in-memory across jobs; server restart clears
 
-async def call_llm_with_fallback(llm_config: dict, prompt: str, system: str, temp=0.7, preferred: str = "") -> tuple[str, str]:
-    """Returns (content, provider_used). Rotates through keys on 429."""
-    errors = []
-    order = list(PROVIDERS)
-    if preferred in order:
-        order.remove(preferred)
-        order.insert(0, preferred)
 
+def build_pool(llm: dict, order: list, disabled: set, fallback: str = "") -> list:
+    """Entries in dispatch order: user priority first, then the rest of the chain."""
+    order = [p for p in order if p in PROVIDERS]
+    if fallback in PROVIDERS and fallback not in order:
+        order.insert(0, fallback)
+    order += [p for p in PROVIDERS if p not in order]
+    pool = []
     for prov in order:
-        cfg = llm_config.get(prov, {})
+        cfg = llm.get(prov, {})
         if prov == "ollama":
-            if not _ollama_ok(cfg.get("url") or ""):
-                continue
-            keys = [None]  # ollama doesn't use keys
+            if cfg.get("url"):
+                pool.append({"prov": "ollama", "idx": 0, "key": cfg["url"], "model": cfg.get("model", "llama3"), "url": cfg["url"], "used": 0, "dead": False})
         else:
-            keys = cfg.get("keys", [])
-            if not keys:
-                continue
+            for i, k in enumerate(cfg.get("keys", [])):
+                if k and k not in disabled:
+                    pool.append({"prov": prov, "idx": i, "key": k, "model": cfg.get("model", ""), "url": "", "used": 0, "dead": False})
+    return pool
 
-        for key_idx, key in enumerate(keys):
-            for attempt in range(1, 4):
-                try:
-                    if prov == "ollama":
-                        result = await call_ollama(cfg["url"], cfg.get("model", "llama3"), prompt, system, temp)
-                    elif prov == "groq":
-                        result = await call_groq(key, cfg.get("model", "qwen/qwen3.8-27b"), prompt, system, temp)
-                    elif prov == "openrouter":
-                        result = await call_openrouter(key, cfg.get("model", "meta-llama/llama-3-8b-instruct:free"), prompt, system, temp)
-                    elif prov == "gemini":
-                        result = await call_gemini(key, cfg.get("model", "gemini-2.5-flash"), prompt, system, temp)
-                    else:
-                        continue
-                    return result, prov
-                except RateLimited:
-                    if key_idx < len(keys) - 1:
-                        errors.append(f"{prov} key#{key_idx+1}: rate limited, trying next key")
-                        break  # break attempt loop, move to next key
-                    if attempt >= 3:
-                        errors.append(f"{prov} key#{key_idx+1}: rate limited on last key")
-                        break
-                    wait = 5 * attempt
-                    errors.append(f"{prov} key#{key_idx+1}: rate limited, waited {wait}s (last key)")
-                    await asyncio.sleep(wait)
-                except httpx.HTTPStatusError as e:
-                    errors.append(f"{prov} key#{key_idx+1} attempt#{attempt}: {_redact(str(e))}")
-                    if e.response.status_code in (401, 403, 404):
-                        break  # bad key/config — don't retry, next key
-                    if attempt < 3:
-                        await asyncio.sleep(2)
-                except Exception as e:
-                    errors.append(f"{prov} key#{key_idx+1} attempt#{attempt}: {_redact(str(e))}")
-                    if attempt < 3:
-                        await asyncio.sleep(2)
 
-    raise Exception(f"All providers failed: {'; '.join(errors)}")
+def _key_status(job, e, state):
+    entry = {"state": state, "used": e["used"]}
+    if state == "cooldown":
+        entry["cooldownLeft"] = max(0, int(_cooldowns.get(e["key"], 0) - time.time()))
+    job["keyStatus"][f"{e['prov']}#{e['idx']}"] = entry
+
+
+async def call_llm(pool: list, job: dict, prompt: str, system: str, temp=0.7) -> tuple[str, str]:
+    """Returns (content, provider_used). Least-used-first over healthy pool."""
+    if not pool:
+        raise Exception("No enabled API keys")
+    errors = []
+    # ponytail: bounded rounds over the whole pool — no per-entry attempt bookkeeping.
+    # 429 → 30s cooldown, 401/403/404 → dead, transient → 5s cooldown (retried next round)
+    for _ in range(5):
+        now = time.time()
+        healthy = sorted((e for e in pool if not e["dead"] and _cooldowns.get(e["key"], 0) <= now),
+                         key=lambda e: e["used"])
+        if not healthy:
+            waits = [t - time.time() for t in (_cooldowns.get(e["key"], 0) for e in pool if not e["dead"])]
+            if not waits:
+                break  # all entries disabled
+            await asyncio.sleep(max(0.2, min(min(waits), 30)))
+            continue
+        for e in healthy:
+            try:
+                if e["prov"] == "ollama":
+                    result = await call_ollama(e["url"], e["model"], prompt, system, temp)
+                else:
+                    result = await _DISPATCH[e["prov"]](e["key"], e["model"], prompt, system, temp)
+                e["used"] += 1
+                _key_status(job, e, "active")
+                return result, e["prov"]
+            except RateLimited:
+                _cooldowns[e["key"]] = time.time() + 30
+                _key_status(job, e, "cooldown")
+                errors.append(f'{e["prov"]} key#{e["idx"]+1}: rate limited (30s cooldown)')
+            except httpx.HTTPStatusError as ex:
+                errors.append(f'{e["prov"]} key#{e["idx"]+1}: {_redact(str(ex))}')
+                if ex.response.status_code in (401, 403, 404):
+                    e["dead"] = True
+                    _key_status(job, e, "disabled")
+            except Exception as ex:
+                errors.append(f'{e["prov"]} key#{e["idx"]+1}: {_redact(str(ex))}')
+                _cooldowns[e["key"]] = time.time() + 5
+        if all(e["dead"] for e in pool):
+            break
+    if all(e["dead"] for e in pool) and errors:
+        errors.append("all keys disabled for this job — re-enable in the key cards")
+    raise Exception(f"All providers failed: {'; '.join(errors[-8:])}")
 
 
 # ── Blueprint generation ───────────────────────────────────────
@@ -178,8 +195,10 @@ def _stub_blueprint(project: dict) -> dict:
     }
 
 
-async def generate_blueprint(llm_config: dict, project: dict, preferred: str = "") -> dict:
-    prompt = f"""Project Blueprint for: "{project['name']}"
+async def generate_blueprint(pool: list, job: dict, project: dict) -> dict:
+    prompt = f"""You are the master context generator for a set of 44 consulting documents that must all stay factually consistent with your output. Be specific and complete — concrete stakeholders, real milestone names, no empty strings where reasonable data can be inferred from the project.
+
+Project Blueprint for: "{project['name']}"
 Sector: {project['sector']} | Location: {project['geo']} | Client: {project['client']}
 Audience: {project['audience']} | Budget: {project['price']} | Duration: {project['duration']}
 Description: {project['desc']}
@@ -187,7 +206,7 @@ Standards: {project['standards']}
 
 Return ONLY raw JSON with keys: projectTitle, executiveObjective, coreMethodologies(array), primaryLocation, mainStakeholders(array), keyMilestones(array of {{name,duration}}), priceSummary, industryContext, complianceFramework(array)"""
 
-    text, _ = await call_llm_with_fallback(llm_config, prompt, "Generate strict JSON. No markdown.", 0.3, preferred)
+    text, _ = await call_llm(pool, job, prompt, "Generate strict JSON. No markdown.", 0.3)
     try:
         text = text.strip()
         try:
@@ -205,7 +224,7 @@ Return ONLY raw JSON with keys: projectTitle, executiveObjective, coreMethodolog
 
 
 # ── Single document generation ─────────────────────────────────
-async def generate_document(llm_config: dict, project: dict, blueprint: dict, doc: dict, preferred: str = "") -> dict:
+async def generate_document(pool: list, job: dict, project: dict, blueprint: dict, doc: dict) -> dict:
     bp = blueprint
     name = doc.get("name", "Document")
     cat = doc.get("cat", "general")
@@ -215,7 +234,10 @@ async def generate_document(llm_config: dict, project: dict, blueprint: dict, do
     fname = f"{cat}/{safe}.md"
     hname = f"{cat}/{safe}.html"
 
-    prompt = f"""Consulting document: "{name}" ({cat}).
+    prompt = f"""MASTER CONTEXT (stay factually consistent with this across all documents):
+{json.dumps(bp, ensure_ascii=False)}
+
+Consulting document: "{name}" ({cat}).
 
 PROJECT: {bp.get('projectTitle', project['name'])}
 OBJECTIVE: {bp.get('executiveObjective', project['desc'])}
@@ -230,10 +252,10 @@ Include tables, lists, Mermaid diagrams where applicable.
 Professional consulting tone. No placeholders. Full content."""
 
     try:
-        content, used_provider = await call_llm_with_fallback(
-            llm_config, prompt,
+        content, used_provider = await call_llm(
+            pool, job, prompt,
             "Expert consultant. Generate comprehensive markdown documents. No preamble, just the document.",
-            0.7, preferred
+            0.7
         )
 
         html = f"""<!DOCTYPE html><html><head><meta charset="UTF-8"><style>
@@ -292,19 +314,18 @@ def _uniq(name: str, seen: set) -> str:
 # ── Job runner ─────────────────────────────────────────────────
 async def run_job(job_id: str, data: dict):
     job = jobs[job_id]
-    llm_config = data.get("llm", {})
+    pool = data["pool"]
     project = data["project"]
     docs = data["docs"]
-    preferred = data.get("preferred", "")
     job["total"] = len(docs)
-    log.info("job %s started: %d docs", job_id, len(docs))
+    log.info("job %s started: %d docs, pool=%d", job_id, len(docs), len(pool))
 
     try:
         # Step 1: Blueprint
         job["status"] = "generating_blueprint"
         job["progressMessage"] = "Generating project blueprint..."
         try:
-            blueprint = await generate_blueprint(llm_config, project, preferred)
+            blueprint = await generate_blueprint(pool, job, project)
         except Exception:
             blueprint = _stub_blueprint(project)
 
@@ -315,13 +336,13 @@ async def run_job(job_id: str, data: dict):
 
             job["status"] = "generating"
             job["progressMessage"] = f"Generating {len(docs)} documents..."
-            sem = asyncio.Semaphore(4)
+            sem = asyncio.Semaphore(min(max(len(pool), 1), 8))
             events = [asyncio.Event() for _ in docs]
             seen: set = set()
 
             async def worker(i: int, doc: dict):
                 async with sem:
-                    result = await generate_document(llm_config, project, blueprint, doc, preferred)
+                    result = await generate_document(pool, job, project, blueprint, doc)
                 if i:
                     await events[i - 1].wait()
                 zf.writestr(_uniq(result["fileName"], seen), result["markdown"])
@@ -370,6 +391,8 @@ class GenerateRequest(BaseModel):
     geminiModel: str = "gemini-2.5-flash"
     metadata: dict = {}
     documents: list[dict] = []
+    providerOrder: list[str] = []
+    disabledKeys: list[str] = []
 
 
 @app.post("/api/generate")
@@ -398,6 +421,9 @@ async def start_generation(req: GenerateRequest, bg: BackgroundTasks):
         "openrouter": {"keys": req.openrouterKeys, "model": req.openrouterModel},
         "gemini": {"keys": req.geminiKeys, "model": req.geminiModel},
     }
+    pool = build_pool(llm, req.providerOrder, set(req.disabledKeys), fallback=req.provider)
+    if not pool:
+        return JSONResponse({"error": "No enabled API keys — add or re-enable keys first"}, 400)
 
     job_id = str(uuid.uuid4())
     jobs[job_id] = {
@@ -408,10 +434,11 @@ async def start_generation(req: GenerateRequest, bg: BackgroundTasks):
         "results": [],
         "zipBytes": None,
         "error": None,
+        "keyStatus": {},
         "createdAt": time.time(),
     }
 
-    bg.add_task(run_job, job_id, {"project": project, "docs": req.documents, "llm": llm, "preferred": req.provider})
+    bg.add_task(run_job, job_id, {"project": project, "docs": req.documents, "pool": pool})
     return {"jobId": job_id}
 
 
@@ -427,6 +454,7 @@ async def get_status(job_id: str):
         "current": job["current"],
         "results": [{k: v for k, v in r.items() if k not in ("markdown", "html")} for r in job["results"]],
         "error": job["error"],
+        "keyStatus": job.get("keyStatus", {}),
     }
 
 

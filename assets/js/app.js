@@ -55,6 +55,66 @@ const PROVIDERS = {
 const S={selected:new Set(DOCS.map(d=>d.id)),filter:'all',blobUrl:null,provider:'groq',generatedFiles:[],previewIndex:null,jobId:null,models:Object.fromEntries(Object.keys(PROVIDERS).map(function(p){return[p,PROVIDERS[p].defaultModel]}))};
 const CAT_ICONS={overview:'\u{1F4D6}',planning:'\u{1F4CB}',operations:'\u2699\uFE0F',data:'\u{1F4CA}',business:'\u{1F4BC}',marketing:'\u{1F4E3}'};
 
+/* ── KEY BANK STATE ───────────────────────────────────── */
+S.keyOrder=(function(){try{var o=JSON.parse(localStorage.getItem('rig_provider_order'));if(Array.isArray(o)&&o.length)return o}catch(e){}return['groq','openrouter','gemini','ollama']})();
+S.disabled=new Set((function(){try{return JSON.parse(localStorage.getItem('rig_keys_disabled'))||[]}catch(e){return[]}})());
+S.keyStatus={};
+function saveDisabled(){localStorage.setItem('rig_keys_disabled',JSON.stringify(Array.from(S.disabled)))}
+function maskKey(k){return k.length>6?'\u2026'+k.slice(-4):k}
+
+function renderKeyCards(){
+  var wrap=document.getElementById('key-cards');if(!wrap)return;
+  var keys=loadKeys(S.provider);
+  wrap.innerHTML=keys.map(function(k,i){
+    var st=(S.keyStatus[S.provider+'#'+i]||{}).state|| (S.disabled.has(k)?'disabled':'active');
+    var ico=st==='disabled'?'\u25B6':st==='cooling'?'\u23F3':'\u23F8';
+    return '<div class="key-card"><span class="key-id" title="'+k+'">'+maskKey(k)+'</span>'+
+      '<span class="key-pill '+st+'">'+st+'</span>'+
+      '<button type="button" class="key-btn" onclick="toggleKey('+i+')" title="pause / resume">'+ico+'</button>'+
+      '<button type="button" class="key-btn" onclick="removeKey('+i+')" title="remove">\u2715</button></div>';
+  }).join('');
+}
+window.toggleKey=function(i){var k=loadKeys(S.provider)[i];if(!k)return;S.disabled.has(k)?S.disabled.delete(k):S.disabled.add(k);saveDisabled();renderKeyCards()};
+window.removeKey=function(i){var keys=loadKeys(S.provider),k=keys[i];if(!k)return;keys.splice(i,1);saveKeys(S.provider,keys);S.disabled.delete(k);saveDisabled();renderKeyCards()};
+window.addKeys=function(){
+  var lines=getKeysFromInput();
+  if(!lines.length){showToast('Paste at least one key','err');return}
+  var keys=loadKeys(S.provider),added=0;
+  lines.forEach(function(k){if(keys.indexOf(k)===-1){keys.push(k);added++}});
+  saveKeys(S.provider,keys);
+  document.getElementById('f-apikey').value='';
+  renderKeyCards();
+  showToast(added?added+' key(s) added':'Keys already present');
+};
+
+function renderPrio(){
+  var el=document.getElementById('prio-list');if(!el)return;
+  el.innerHTML=S.keyOrder.map(function(p,i){
+    return '<div class="prio-row"><span class="prio-n">'+(i+1)+'</span><span>'+PROVIDERS[p].name+'</span>'+
+      '<span class="prio-btns"><button type="button" onclick="movePrio('+i+',-1)"'+(i===0?' disabled':'')+'>\u2191</button>'+
+      '<button type="button" onclick="movePrio('+i+',1)"'+(i===S.keyOrder.length-1?' disabled':'')+'>\u2193</button></span></div>';
+  }).join('');
+}
+window.movePrio=function(i,d){var j=i+d;if(j<0||j>=S.keyOrder.length)return;var t=S.keyOrder[i];S.keyOrder[i]=S.keyOrder[j];S.keyOrder[j]=t;localStorage.setItem('rig_provider_order',JSON.stringify(S.keyOrder));renderPrio()};
+
+function mergeKeyStatus(ks){
+  if(!ks)return;
+  Object.keys(ks).forEach(function(kid){
+    var ent=ks[kid],parts=kid.split('#'),prov=parts[0],idx=+parts[1];
+    var prev=(S.keyStatus[kid]||{}).state;
+    if(prev===ent.state)return;
+    if(ent.state==='disabled'){
+      var kk=loadKeys(prov)[idx];
+      if(kk&&!S.disabled.has(kk)){S.disabled.add(kk);saveDisabled()}
+      log(prov+' key#'+(idx+1)+' disabled (auth/model error)','error');
+    }else if(ent.state==='cooldown'){
+      log(prov+' key#'+(idx+1)+' rate limited \u2014 cooling '+(ent.cooldownLeft||30)+'s');
+    }
+  });
+  S.keyStatus=ks;
+  renderKeyCards();
+}
+
 /* ── KEY STORAGE ──────────────────────────────────────── */
 function loadKeys(provider){
   try{return JSON.parse(localStorage.getItem('rig_keys_'+provider))||[]}catch(e){return[]}
@@ -120,10 +180,10 @@ window.switchProvider=function(provider){
     kw.style.display='';ki.required=true;
     var p={groq:'gsk_...',openrouter:'sk-or-v1-...',gemini:'AIza...'};
     ki.placeholder=p[provider]||'API key';
-    var saved=loadKeys(provider);
-    if(saved.length>0)ki.value=saved.join('\n');
-    else ki.value='';
+    ki.value='';
+    renderKeyCards();
   }else{kw.style.display='none';ki.required=false;ki.value=''}
+  renderPrio();
 
   document.getElementById('ollama-url-wrap').style.display=provider==='ollama'?'':'none';
 
@@ -177,15 +237,24 @@ document.addEventListener('DOMContentLoaded',function(){
   document.querySelectorAll('.doc-total').forEach(function(e){e.textContent=DOCS.length});
   renderDocGrid();
   switchProvider('groq');
+  document.getElementById('btn-add-keys').addEventListener('click',addKeys);
 
   document.getElementById('btn-to-docs').addEventListener('click',function(){
     var name=document.getElementById('f-name').value.trim();
     if(!name){showToast('Enter a Project/Service Name','err');return}
     var cfg=PROVIDERS[S.provider];
     if(cfg.needsKey){
-      var keys=getKeysFromInput();
-      if(keys.length===0){showToast('API key required for '+cfg.name,'err');return}
-      saveKeys(S.provider,keys);
+      var extra=getKeysFromInput();
+      if(extra.length){
+        var keys=loadKeys(S.provider);
+        extra.forEach(function(k){if(keys.indexOf(k)===-1)keys.push(k)});
+        saveKeys(S.provider,keys);
+        document.getElementById('f-apikey').value='';
+        renderKeyCards();
+      }
+      var saved=loadKeys(S.provider);
+      if(saved.length===0){showToast('API key required for '+cfg.name,'err');return}
+      if(saved.every(function(k){return S.disabled.has(k)})){showToast('All keys paused \u2014 re-enable one','err');return}
     }
     goTo(2);
   });
@@ -270,9 +339,12 @@ window.startGeneration=async function(){
       duration:document.getElementById('f-duration').value.trim(),
       lang:document.getElementById('f-lang').value.trim()
     },
-    documents:DOCS.filter(function(d){return S.selected.has(d.id)})
+    documents:DOCS.filter(function(d){return S.selected.has(d.id)}),
+    providerOrder:S.keyOrder,
+    disabledKeys:Array.from(S.disabled)
   };
 
+  S.keyStatus={};
   goTo(3);
   var panel=document.getElementById('status-ticker');if(panel)panel.innerHTML='';
   var fill=document.getElementById('prog-fill');
@@ -300,6 +372,7 @@ window.startGeneration=async function(){
       }
       fails=0;
       var st=await sr.json();
+      mergeKeyStatus(st.keyStatus);
 
       if(st.progressMessage!==lastMsg){log(st.progressMessage,st.status==='error'?'error':'active');lastMsg=st.progressMessage}
       if(st.total>0){var p=Math.round((st.current/st.total)*90)+5;setProg(p,st.current+'/'+st.total+' documents',lbl,fill,pct)}

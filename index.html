@@ -49,7 +49,13 @@
       <div class="fg" style="margin-top:12px">
         <div class="field" id="ollama-url-wrap" style="display:none"><label>Ollama URL</label><input type="text" id="f-ollama-url" value="http://localhost:11434" placeholder="http://localhost:11434"></div>
         <div class="field"><label>Model</label><select id="f-model"></select></div>
-        <div class="field" id="api-key-wrap" style="display:none"><label>API Keys (one per line, rotates on rate limit)</label><textarea id="f-apikey" rows="3" placeholder="gsk_...&#10;gsk_... (optional backup key)" autocomplete="off"></textarea><div class="field-hint">Saved in browser localStorage. Multiple keys auto-rotate on 429.</div></div>
+        <div class="field" id="api-key-wrap" style="display:none"><label>API Keys</label>
+          <div class="key-cards" id="key-cards"></div>
+          <textarea id="f-apikey" rows="2" placeholder="Paste keys, one per line, then Add" autocomplete="off"></textarea>
+          <button type="button" class="btn btn-ghost btn-sm" id="btn-add-keys">Add keys</button>
+          <div class="field-hint">Keys stay in browser localStorage. Load spreads across all enabled keys; paused keys are skipped.</div>
+        </div>
+        <div class="field"><label>Provider Priority (dispatch order)</label><div class="prio-list" id="prio-list"></div><div class="field-hint">Top provider is tried first; the rest are fallbacks.</div></div>
       </div>
     </div>
 

@@ -193,3 +193,25 @@ body.light .logo-icon,body.light .btn-primary,body.light .dc-check{color:#fff}
   .results-layout{grid-template-columns:1fr}
   .provider-row{flex-wrap:wrap}
 }
+
+/* ═══ KEY CARDS + PROVIDER PRIORITY ══════════════════════ */
+.key-cards{display:flex;flex-direction:column;gap:6px;margin-bottom:8px}
+.key-card{display:flex;align-items:center;gap:8px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--r8);padding:7px 10px;font-size:12px}
+.key-id{font-family:var(--mono);color:var(--text2);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.key-pill{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.4px;padding:2px 8px;border-radius:20px}
+.key-pill.active{background:rgba(34,197,94,.15);color:var(--green)}
+.key-pill.cooling{background:rgba(234,179,8,.15);color:#eab308}
+.key-pill.disabled{background:rgba(239,68,68,.15);color:var(--red)}
+.key-btn{background:none;border:1px solid var(--border);color:var(--text2);border-radius:var(--r6);width:24px;height:22px;cursor:pointer;font-size:11px;line-height:1;display:grid;place-items:center}
+.key-btn:hover{border-color:var(--border-hover);color:var(--text)}
+.btn-ghost{background:var(--surface2);border:1px solid var(--border);color:var(--text2)}
+.btn-ghost:hover{border-color:var(--border-hover);color:var(--text)}
+.btn-sm{padding:6px 12px;font-size:12px}
+.prio-list{display:flex;flex-direction:column;gap:5px}
+.prio-row{display:flex;align-items:center;gap:10px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--r8);padding:7px 10px;font-size:12.5px;font-weight:500}
+.prio-n{width:20px;height:20px;border-radius:50%;background:var(--accent-dim);color:var(--accent-hover);font-size:11px;font-weight:700;display:grid;place-items:center}
+.prio-row span:nth-child(2){flex:1}
+.prio-btns{display:flex;gap:4px}
+.prio-btns button{background:none;border:1px solid var(--border);color:var(--text2);border-radius:var(--r6);width:24px;height:22px;cursor:pointer;font-size:12px}
+.prio-btns button:hover:not(:disabled){border-color:var(--border-hover);color:var(--text)}
+.prio-btns button:disabled{opacity:.35;cursor:default}
