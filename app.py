@@ -7,18 +7,22 @@ import json
 import logging
 import os
 import re
+import sys
 import time
 import urllib.parse
 import uuid
 import zipfile
-from html import escape
 from io import BytesIO
+from pathlib import Path
 
 import httpx
 from fastapi import BackgroundTasks, FastAPI
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+
+# Frozen (PyInstaller) builds extract to sys._MEIPASS; source runs sit next to this file.
+_BASE = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 
 app = FastAPI(title="RIG")
 log = logging.getLogger("rig")
@@ -223,6 +227,91 @@ Return ONLY raw JSON with keys: projectTitle, executiveObjective, coreMethodolog
         return _stub_blueprint(project)
 
 
+# ── Markdown → DOCX ───────────────────────────────────────────
+_INLINE = re.compile(r'(\*\*.+?\*\*|__.+?__|\*.+?\*|_.+?_|`.+?`)')
+
+
+def _add_inline(p, text: str):
+    """Bold/italic/code runs. ponytail: no nested emphasis — good enough for LLM output."""
+    for part in _INLINE.split(text):
+        if not part:
+            continue
+        if len(part) > 4 and part[:2] in ("**", "__") and part[:2] == part[-2:]:
+            p.add_run(part[2:-2]).bold = True
+        elif len(part) > 2 and part[0] == part[-1] == "`":
+            r = p.add_run(part[1:-1]); r.font.name = "Consolas"
+        elif len(part) > 2 and part[0] == part[-1] in "*_":
+            p.add_run(part[1:-1]).italic = True
+        else:
+            p.add_run(part)
+
+
+def _is_table_sep(row: str) -> bool:
+    cells = [c.strip() for c in row.strip().strip("|").split("|")]
+    return bool(cells) and all(re.fullmatch(r":?-{2,}:?", c) for c in cells)
+
+
+def md_to_docx(md: str) -> bytes:
+    from docx import Document
+    from docx.shared import Pt
+    doc = Document()
+    lines = md.splitlines()
+    i, code = 0, None
+    while i < len(lines):
+        line = lines[i]
+        if line.strip().startswith("```"):
+            if code is None:
+                code = []
+            else:
+                r = doc.add_paragraph().add_run("\n".join(code))
+                r.font.name, r.font.size = "Consolas", Pt(9)
+                code = None
+            i += 1
+            continue
+        if code is not None:
+            code.append(line)
+            i += 1
+            continue
+        if line.strip().startswith("|") and i + 1 < len(lines) and _is_table_sep(lines[i + 1]):
+            rows = []
+            while i < len(lines) and lines[i].strip().startswith("|"):
+                if not _is_table_sep(lines[i]):
+                    rows.append([c.strip() for c in lines[i].strip().strip("|").split("|")])
+                i += 1
+            if rows:
+                cols = len(rows[0])
+                t = doc.add_table(rows=len(rows), cols=cols)
+                t.style = "Table Grid"
+                for ri, row in enumerate(rows):
+                    for ci in range(min(len(row), cols)):
+                        p = t.rows[ri].cells[ci].paragraphs[0]
+                        _add_inline(p, row[ci])
+                        if ri == 0:
+                            for run in p.runs:
+                                run.bold = True
+            continue
+        m = re.match(r'^(#{1,6})\s+(.*)', line)
+        if m:
+            doc.add_heading(m.group(2), level=len(m.group(1)))
+        elif re.match(r'^\s*(-{3,}|\*{3,}|_{3,})\s*$', line):
+            pass  # horizontal rule — no native docx equivalent, skip
+        elif line.lstrip().startswith(">"):
+            _add_inline(doc.add_paragraph(style="Quote"), line.lstrip()[1:].strip())
+        elif (m := re.match(r'^\s*([-*+]|\d+\.)\s+(.*)', line)):
+            # ponytail: "List Number" style continues one numbering sequence across lists
+            style = "List Number" if m.group(1)[0].isdigit() else "List Bullet"
+            _add_inline(doc.add_paragraph(style=style), m.group(2))
+        elif line.strip():
+            _add_inline(doc.add_paragraph(), line.strip())
+        i += 1
+    if code:
+        r = doc.add_paragraph().add_run("\n".join(code))
+        r.font.name, r.font.size = "Consolas", Pt(9)
+    buf = BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
 # ── Single document generation ─────────────────────────────────
 async def generate_document(pool: list, job: dict, project: dict, blueprint: dict, doc: dict) -> dict:
     bp = blueprint
@@ -231,8 +320,7 @@ async def generate_document(pool: list, job: dict, project: dict, blueprint: dic
     # ponytail: sanitize before try so zip paths can't escape (ZIP slip)
     safe = re.sub(r'[^A-Za-z0-9 _-]', '', name.replace(" ", "_")).strip()[:80] or "document"
     cat = re.sub(r'[^A-Za-z0-9_-]', '', cat) or "GENERAL"
-    fname = f"{cat}/{safe}.md"
-    hname = f"{cat}/{safe}.html"
+    fname = f"{cat}/{safe}.docx"
 
     prompt = f"""MASTER CONTEXT (stay factually consistent with this across all documents):
 {json.dumps(bp, ensure_ascii=False)}
@@ -248,7 +336,7 @@ BUDGET: {json.dumps(bp.get('priceSummary', project['price']))}
 METHODOLOGIES: {json.dumps(bp.get('coreMethodologies', []))}
 
 Language: {project['lang']}. Length: 2000+ words. Format: Markdown.
-Include tables, lists, Mermaid diagrams where applicable.
+Include tables and lists where applicable.
 Professional consulting tone. No placeholders. Full content."""
 
     try:
@@ -258,38 +346,21 @@ Professional consulting tone. No placeholders. Full content."""
             0.7
         )
 
-        html = f"""<!DOCTYPE html><html><head><meta charset="UTF-8"><style>
-body{{font-family:'Segoe UI',Arial,sans-serif;max-width:800px;margin:40px auto;padding:0 30px;color:#1a1a2e;line-height:1.7}}
-h1{{font-size:26px;border-bottom:3px solid #b8f241;padding-bottom:10px}}
-h2{{font-size:20px;color:#2d2d44;margin-top:32px;border-left:4px solid #41e8f2;padding-left:12px}}
-h3{{font-size:16px;color:#3a3a52;margin-top:24px}}
-table{{width:100%;border-collapse:collapse;margin:16px 0;font-size:13px}}
-th{{background:#f0f0f5;padding:10px 12px;text-align:left;border:1px solid #d0d0e0;font-weight:600}}
-td{{padding:8px 12px;border:1px solid #d0d0e0}}
-tr:nth-child(even){{background:#f8f8fc}}
-ul,ol{{padding-left:22px}}li{{margin-bottom:6px}}
-blockquote{{border-left:3px solid #b8f241;margin:16px 0;padding:10px 16px;background:#f8fdf0}}
-.header{{text-align:center;margin-bottom:30px;padding-bottom:20px;border-bottom:2px solid #e0e0f0}}
-.meta{{font-size:12px;color:#7a7a9e;margin-top:8px}}
-</style></head><body>
-<div class="header"><h1>{escape(str(bp.get('projectTitle', project['name'])))}</h1>
-<p class="meta">{escape(str(name))} | {escape(str(project['sector']))} | {escape(str(project['geo']))} | via {escape(used_provider)}</p></div>
-<pre style="white-space:pre-wrap">{escape(content)}</pre></body></html>"""
-
         return {
-            "fileName": fname, "htmlFileName": hname,
+            "fileName": fname,
             "docName": name, "category": cat,
-            "markdown": content, "html": html,
+            "docx": md_to_docx(content),
+            "markdown": content,
             "wordCount": len(content.split()),
             "error": False, "usedProvider": used_provider
         }
     except Exception as e:
         msg = _redact(str(e))
         return {
-            "fileName": fname, "htmlFileName": hname,
+            "fileName": fname,
             "docName": name, "category": cat,
+            "docx": None,
             "markdown": f"# {name}\n\nFailed: {msg}",
-            "html": f"<h1>{escape(str(name))}</h1><p>{escape(msg)}</p>",
             "wordCount": 0, "error": True, "errorMessage": msg
         }
 
@@ -332,8 +403,6 @@ async def run_job(job_id: str, data: dict):
         # Step 2: Documents — concurrent, results appended in docs order
         zip_buffer = BytesIO()
         with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-            zf.writestr("BLUEPRINT.json", json.dumps(blueprint, indent=2))
-
             job["status"] = "generating"
             job["progressMessage"] = f"Generating {len(docs)} documents..."
             sem = asyncio.Semaphore(min(max(len(pool), 1), 8))
@@ -345,8 +414,8 @@ async def run_job(job_id: str, data: dict):
                     result = await generate_document(pool, job, project, blueprint, doc)
                 if i:
                     await events[i - 1].wait()
-                zf.writestr(_uniq(result["fileName"], seen), result["markdown"])
-                zf.writestr(_uniq(result["htmlFileName"], seen), result["html"])
+                if result["docx"]:
+                    zf.writestr(_uniq(result["fileName"], seen), result["docx"])
                 job["results"].append({
                     "docName": result["docName"],
                     "fileName": result["fileName"],
@@ -355,7 +424,6 @@ async def run_job(job_id: str, data: dict):
                     "usedProvider": result.get("usedProvider", ""),
                     "errorMessage": result.get("errorMessage", ""),
                     "markdown": result["markdown"],
-                    "html": result["html"],
                     "category": result["category"]
                 })
                 job["current"] = i + 1
@@ -452,7 +520,7 @@ async def get_status(job_id: str):
         "progressMessage": job["progressMessage"],
         "total": job["total"],
         "current": job["current"],
-        "results": [{k: v for k, v in r.items() if k not in ("markdown", "html")} for r in job["results"]],
+        "results": [{k: v for k, v in r.items() if k != "markdown"} for r in job["results"]],
         "error": job["error"],
         "keyStatus": job.get("keyStatus", {}),
     }
@@ -467,7 +535,6 @@ async def get_document(job_id: str, index: int):
     return {
         "docName": r["docName"],
         "markdown": r["markdown"],
-        "html": r["html"],
         "wordCount": r["wordCount"],
         "error": r["error"],
         "errorMessage": r.get("errorMessage", ""),
@@ -495,15 +562,35 @@ async def health():
 
 
 # ── Serve frontend ─────────────────────────────────────────────
-app.mount("/assets", StaticFiles(directory="assets"), name="assets")
+app.mount("/assets", StaticFiles(directory=str(_BASE / "assets")), name="assets")
 
 @app.get("/")
 async def index():
-    return FileResponse("index.html")
+    return FileResponse(_BASE / "index.html")
+
+
+def _free_port(preferred: int = 8000, tries: int = 11) -> int:
+    import socket
+    for port in range(preferred, preferred + tries):
+        with socket.socket() as s:
+            try:
+                s.bind(("127.0.0.1", port))
+                return port
+            except OSError:
+                continue
+    return preferred
 
 
 if __name__ == "__main__":
     import uvicorn
-    print("\n  RIG — Report Intelligence Generator")
-    print("  http://localhost:8000\n")
-    uvicorn.run(app, host=os.environ.get("HOST", "127.0.0.1"), port=8000)
+    port = int(os.environ.get("PORT", 0)) or _free_port()
+    host = os.environ.get("HOST", "127.0.0.1")
+    if getattr(sys, "frozen", False):
+        # Windowed exe: no console — open the browser ourselves.
+        import threading
+        import webbrowser
+        threading.Timer(1.5, lambda: webbrowser.open(f"http://localhost:{port}")).start()
+    else:
+        print("\n  RIG — Report Intelligence Generator")
+        print(f"  http://localhost:{port}\n")
+    uvicorn.run(app, host=host, port=port)

@@ -13,7 +13,11 @@ Open http://localhost:8000 — that's it.
 
 ### Windows
 
-Double-click `RIG.bat`. It creates the venv, installs dependencies, starts the app, and opens your browser. Requires [Python 3](https://www.python.org/downloads/) on PATH ("Add Python to PATH" during install). Close the console window to stop the app.
+**Option A — installer (no Python needed):** download `RIG-Setup.exe` from the [Actions artifacts](../../actions/workflows/windows-installer.yml) (run the "Windows installer" workflow, then grab the artifact), or build it yourself with `build_windows.bat` on any Windows machine. Install, launch from the Start Menu — the browser opens automatically.
+
+**Option B — portable:** copy `RIG.exe` (single file, no install) and double-click it.
+
+**Option C — from source:** double-click `RIG.bat`. Creates the venv, installs dependencies, starts the app, opens your browser. Requires [Python 3](https://www.python.org/downloads/) on PATH. Close the console window to stop the app.
 
 ### Without Ollama (cloud only)
 
@@ -48,7 +52,7 @@ docker compose up -d
 2. **Fill project details** — name, sector, client, description
 3. **Pick documents** — choose from 44 consulting templates
 4. **Generate** — app creates a blueprint, then generates each doc with retry + fallback
-5. **Preview & download** — preview individual docs, then download ZIP with markdown + HTML
+5. **Preview & download** — preview individual docs in the app, then download a ZIP of Word `.docx` files
 
 ### Provider Fallback Chain
 
@@ -64,7 +68,8 @@ python app.py (single file)
 │   └── GET  /api/download/{id} → ZIP download
 ├── LLM provider routing (Groq / Ollama / OpenRouter / Gemini)
 ├── Retry + fallback logic
-├── ZIP packaging
+├── Markdown → DOCX conversion
+├── ZIP packaging (docx only)
 └── Serves frontend (index.html + assets/)
 ```
 
