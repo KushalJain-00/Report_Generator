@@ -2,12 +2,20 @@
 RIG — Report Intelligence Generator
 Single-file backend. Run: python app.py
 """
+import os
+import sys
+
+# Windowed PyInstaller exe: no console → std streams are None, which crashes
+# uvicorn's logging formatter (sys.stderr.isatty()). Point them at devnull.
+# Must run before any third-party import (warnings print to stderr).
+if getattr(sys, "frozen", False) and sys.stderr is None:
+    sys.stdout = open(os.devnull, "w")
+    sys.stderr = open(os.devnull, "w")
+
 import asyncio
 import json
 import logging
-import os
 import re
-import sys
 import time
 import urllib.parse
 import uuid
