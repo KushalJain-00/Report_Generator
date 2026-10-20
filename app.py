@@ -31,7 +31,7 @@ from pydantic import BaseModel
 
 # Frozen (PyInstaller) builds extract to sys._MEIPASS; source runs sit next to this file.
 _BASE = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
-VERSION = "1.0.1"  # docx-only + windowed-exe logging fix
+VERSION = "1.0.2"  # docx-only + windowed-exe fix + server-side key storage
 
 app = FastAPI(title="RIG")
 log = logging.getLogger("rig")
@@ -568,6 +568,32 @@ async def download(job_id: str):
 @app.get("/health")
 async def health():
     return {"ok": True, "v": VERSION}
+
+
+# ── Persistent API keys (~/.rig_keys.json) ────────────────────
+KEYS_FILE = Path.home() / ".rig_keys.json"
+
+
+@app.get("/api/keys")
+async def get_keys():
+    try:
+        data = json.loads(KEYS_FILE.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+@app.post("/api/keys")
+async def put_keys(req: dict):
+    data = {}
+    for prov in ("groq", "openrouter", "gemini"):
+        v = req.get(prov)
+        data[prov] = ([str(k)[:256] for k in v if isinstance(k, str) and k.strip()][:50]
+                      if isinstance(v, list) else [])
+    url = req.get("ollamaUrl", "")
+    data["ollamaUrl"] = str(url)[:512] if isinstance(url, str) else ""
+    KEYS_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    return {"ok": True}
 
 
 # ── Serve frontend ─────────────────────────────────────────────

@@ -1,7 +1,7 @@
 ; Inno Setup script — compile: iscc RIG.iss  (expects dist\RIG.exe from PyInstaller)
 [Setup]
 AppName=RIG - Report Intelligence Generator
-AppVersion=1.0.1
+AppVersion=1.0.2
 DefaultDirName={autopf}\RIG
 DefaultGroupName=RIG
 OutputBaseFilename=RIG-Setup

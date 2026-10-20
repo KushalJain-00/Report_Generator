@@ -119,8 +119,29 @@ function mergeKeyStatus(ks){
 function loadKeys(provider){
   try{return JSON.parse(localStorage.getItem('rig_keys_'+provider))||[]}catch(e){return[]}
 }
+function syncKeysToServer(){
+  fetch('/api/keys',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({groq:loadKeys('groq'),openrouter:loadKeys('openrouter'),gemini:loadKeys('gemini'),ollamaUrl:localStorage.getItem('rig_ollama_url')||''})}).catch(function(){});
+}
 function saveKeys(provider,keys){
   localStorage.setItem('rig_keys_'+provider,JSON.stringify(keys));
+  syncKeysToServer();
+}
+function hydrateKeysFromServer(){
+  fetch('/api/keys').then(function(r){return r.json()}).then(function(d){
+    var changed=false;
+    ['groq','openrouter','gemini'].forEach(function(p){
+      var local=loadKeys(p),remote=Array.isArray(d[p])?d[p]:[];
+      var grew=false;
+      remote.forEach(function(k){if(local.indexOf(k)===-1){local.push(k);grew=true;changed=true}});
+      if(grew)localStorage.setItem('rig_keys_'+p,JSON.stringify(local));
+    });
+    if(d.ollamaUrl&&!localStorage.getItem('rig_ollama_url')){
+      localStorage.setItem('rig_ollama_url',d.ollamaUrl);
+      var ou=document.getElementById('f-ollama-url');if(ou)ou.value=d.ollamaUrl;
+      changed=true;
+    }
+    if(changed)renderKeyCards();
+  }).catch(function(){});
 }
 function getKeysFromInput(){
   var raw=document.getElementById('f-apikey').value;
@@ -238,6 +259,12 @@ document.addEventListener('DOMContentLoaded',function(){
   renderDocGrid();
   switchProvider('groq');
   document.getElementById('btn-add-keys').addEventListener('click',addKeys);
+  hydrateKeysFromServer();
+  var ou=document.getElementById('f-ollama-url');
+  if(ou){
+    if(localStorage.getItem('rig_ollama_url'))ou.value=localStorage.getItem('rig_ollama_url');
+    ou.addEventListener('change',function(){localStorage.setItem('rig_ollama_url',ou.value);syncKeysToServer()});
+  }
 
   document.getElementById('btn-to-docs').addEventListener('click',function(){
     var name=document.getElementById('f-name').value.trim();
